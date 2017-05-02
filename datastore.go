@@ -10,6 +10,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/johntdyer/slackrus"
+	_ "github.com/mattes/migrate/driver/postgres" //for migrations
 	"github.com/mattes/migrate/migrate"
 
 	dotenv "github.com/joho/godotenv"
