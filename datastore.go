@@ -107,7 +107,7 @@ func getDBConnection(settings *Settings) *runner.DB {
 
 	if settings.ServerIsLVE {
 		log.Info("migrating")
-		errs, ok := migrate.UpSync(settings.DSN+"?sslmode=disable", "./models/migrations")
+		errs, ok := migrate.UpSync(settings.DSN+"?sslmode=disable", "./server/models/migrations")
 		if !ok {
 			finalError := ""
 			for _, err := range errs {
