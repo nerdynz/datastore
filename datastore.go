@@ -9,6 +9,7 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/mattes/migrate/migrate"
 
 	dotenv "github.com/joho/godotenv"
 	dat "gopkg.in/mgutz/dat.v1"
@@ -31,14 +32,15 @@ var viewGlobals = map[string]interface{}{
 // New - returns a new datastore which contains redis, database, view globals and settings.
 func New() *Datastore {
 	store := &Datastore{}
-	store.Settings = loadSettings()
-	store.DB = getDBConnection()
-	store.Cache = getCacheConnection()
+	settings := loadSettings()
+	store.Settings = settings
+	store.DB = getDBConnection(settings)
+	store.Cache = getCacheConnection(settings)
 	store.ViewGlobals = viewGlobals
 	return store
 }
 
-func getDBConnection() *runner.DB {
+func getDBConnection(settings *Settings) *runner.DB {
 	//get url from ENV in the following format postgres://user:pass@192.168.8.8:5432/spaceio")
 	dbURL := os.Getenv("DATABASE_URL")
 	log.Info(dbURL)
@@ -79,11 +81,23 @@ func getDBConnection() *runner.DB {
 	// Log any query over 10ms as warnings. (optional)
 	runner.LogQueriesThreshold = 1 * time.Microsecond
 
+	if settings.ServerIsLVE {
+		log.Info("migrating")
+		errs, ok := migrate.UpSync(settings.DSN+"?sslmode=disable", "./models/migrations")
+		if !ok {
+			finalError := ""
+			for _, err := range errs {
+				finalError += err.Error() + "\n"
+			}
+			log.Error(finalError)
+		}
+	}
+
 	// db connection
 	return runner.NewDB(db, "postgres")
 }
 
-func getCacheConnection() *redis.Client {
+func getCacheConnection(settings *Settings) *redis.Client {
 
 	opts := &redis.Options{
 		Addr:     "localhost:6379",
