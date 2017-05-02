@@ -9,6 +9,7 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/johntdyer/slackrus"
 	"github.com/mattes/migrate/migrate"
 
 	dotenv "github.com/joho/godotenv"
@@ -33,6 +34,28 @@ var viewGlobals = map[string]interface{}{
 func New() *Datastore {
 	store := &Datastore{}
 	settings := loadSettings()
+
+	// - LOGGING
+	// Log as JSON instead of the default ASCII formatter.
+	log.SetFormatter(&log.JSONFormatter{})
+	// Output to stderr instead of stdout, could also be a file.
+	log.SetOutput(os.Stderr)
+	// Only log the warning severity or above.
+	log.SetLevel(log.DebugLevel)
+	logHook := &slackrus.SlackrusHook{
+		HookURL:        "https://hooks.slack.com/services/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",
+		AcceptedLevels: slackrus.LevelThreshold(log.DebugLevel),
+		Channel:        "#" + settings.Sitename + "-logs",
+		Username:       settings.ServerIs,
+	}
+	if settings.ServerIsDEV {
+		logHook.IconEmoji = ":hamster:"
+	} else {
+		logHook.IconEmoji = ":dog:"
+	}
+	log.AddHook(logHook)
+	log.Info("App Started. Server Is: " + settings.ServerIs)
+
 	store.Settings = settings
 	store.DB = getDBConnection(settings)
 	store.Cache = getCacheConnection(settings)
