@@ -9,10 +9,10 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/johntdyer/slackrus"
 	_ "github.com/mattes/migrate/driver/postgres" //for migrations
 	"github.com/mattes/migrate/migrate"
 
+	"github.com/jcuga/golongpoll"
 	dotenv "github.com/joho/godotenv"
 	dat "gopkg.in/mgutz/dat.v1"
 	runner "gopkg.in/mgutz/dat.v1/sqlx-runner"
@@ -23,6 +23,7 @@ type Datastore struct {
 	DB          *runner.DB
 	Cache       *redis.Client
 	Settings    *Settings
+	EventBus    *golongpoll.LongpollManager
 	ViewGlobals map[string]interface{}
 }
 
@@ -42,19 +43,19 @@ func New() *Datastore {
 	// Output to stderr instead of stdout, could also be a file.
 	log.SetOutput(os.Stderr)
 	// Only log the warning severity or above.
-	log.SetLevel(log.DebugLevel)
-	logHook := &slackrus.SlackrusHook{
-		HookURL:        "https://hooks.slack.com/services/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",
-		AcceptedLevels: slackrus.LevelThreshold(log.DebugLevel),
-		Channel:        "#" + settings.Sitename + "-logs",
-		Username:       settings.ServerIs,
-	}
-	if settings.ServerIsDEV {
-		logHook.IconEmoji = ":hamster:"
-	} else {
-		logHook.IconEmoji = ":dog:"
-	}
-	log.AddHook(logHook)
+	// // log.SetLevel(log.DebugLevel)
+	// // logHook := &slackrus.SlackrusHook{
+	// // 	HookURL:        "https://hooks.slack.com/services/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",
+	// // 	AcceptedLevels: slackrus.LevelThreshold(log.DebugLevel),
+	// // 	Channel:        "#" + settings.Sitename + "-logs",
+	// // 	Username:       settings.ServerIs,
+	// // }
+	// if settings.ServerIsDEV {
+	// 	logHook.IconEmoji = ":hamster:"
+	// } else {
+	// 	logHook.IconEmoji = ":dog:"
+	// }
+	// log.AddHook(logHook)
 	log.Info("App Started. Server Is: " + settings.ServerIs)
 
 	store.Settings = settings
