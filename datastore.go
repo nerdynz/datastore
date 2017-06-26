@@ -9,10 +9,14 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
 	_ "github.com/mattes/migrate/driver/postgres" //for migrations
 	"github.com/mattes/migrate/migrate"
+	"github.com/unrolled/render"
 
-	"github.com/jcuga/golongpoll"
 	dotenv "github.com/joho/godotenv"
 	dat "gopkg.in/mgutz/dat.v1"
 	runner "gopkg.in/mgutz/dat.v1/sqlx-runner"
@@ -20,16 +24,11 @@ import (
 )
 
 type Datastore struct {
-	DB          *runner.DB
-	Cache       *redis.Client
-	Settings    *Settings
-	EventBus    *golongpoll.LongpollManager
-	ViewGlobals map[string]interface{}
-}
-
-var viewGlobals = map[string]interface{}{
-	"Date":      time.Now(),
-	"Copyright": time.Now().Year(),
+	Renderer *render.Render
+	DB       *runner.DB
+	Cache    *redis.Client
+	Settings *Settings
+	S3       *s3.S3
 }
 
 // New - returns a new datastore which contains redis, database, view globals and settings.
@@ -61,7 +60,6 @@ func New() *Datastore {
 	store.Settings = settings
 	store.DB = getDBConnection(settings)
 	store.Cache = getCacheConnection(settings)
-	store.ViewGlobals = viewGlobals
 	return store
 }
 
@@ -195,4 +193,29 @@ func loadSettings() *Settings {
 
 func (s *Settings) Get(setting string) string {
 	return os.Getenv(setting)
+}
+
+func getS3Connection() *s3.S3 {
+	id := os.Getenv("AWS_ACCESS_KEY_ID")
+	if id == "" {
+		log.Error("AWS_ACCESS_KEY_ID not specified")
+	}
+	key := os.Getenv("AWS_SECRET_ACCESS_KEY")
+	if key == "" {
+		log.Error("AWS_SECRET_ACCESS_KEY not specified")
+	}
+	region := os.Getenv("AWS_REGION")
+	if region == "" {
+		log.Error("AWS_REGION not specified")
+	}
+	token := ""
+
+	creds := credentials.NewStaticCredentials(id, key, token)
+	_, err := creds.Get()
+	if err != nil {
+		log.Error("AWS authentication error")
+	}
+	cfg := aws.NewConfig().WithRegion(region).WithCredentials(creds)
+	s := s3.New(session.New(), cfg)
+	return s
 }
