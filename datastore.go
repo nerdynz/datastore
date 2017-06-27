@@ -60,6 +60,7 @@ func New() *Datastore {
 	store.Settings = settings
 	store.DB = getDBConnection(settings)
 	store.Cache = getCacheConnection(settings)
+	store.S3 = getS3Connection()
 	return store
 }
 
