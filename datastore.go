@@ -164,6 +164,7 @@ type Settings struct {
 	EncKey            string
 	ServerPort        string
 	AttachmentsFolder string
+	Proto             string
 }
 
 func loadSettings() *Settings {
