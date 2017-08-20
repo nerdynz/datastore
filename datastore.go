@@ -156,15 +156,17 @@ func getCacheConnection(settings *Settings) *redis.Client {
 
 // Settings - common settings used around the site. Currently loaded into the datastore object
 type Settings struct {
-	ServerIsDEV       bool
-	ServerIsLVE       bool
-	ServerIs          string
-	DSN               string
-	Sitename          string
-	EncKey            string
-	ServerPort        string
-	AttachmentsFolder string
-	Proto             string
+	ServerIsDEV          bool
+	ServerIsLVE          bool
+	ServerIs             string
+	DSN                  string
+	CanonicalURL         string
+	Sitename             string
+	EncKey               string
+	ServerPort           string
+	AttachmentsFolder    string
+	Proto                string
+	CheckCSRFViaReferrer bool
 }
 
 func loadSettings() *Settings {
@@ -185,7 +187,11 @@ func loadSettings() *Settings {
 	s.Sitename = os.Getenv("SITE_NAME")
 	s.EncKey = os.Getenv("SECURITY_ENCRYPTION_KEY")
 	s.AttachmentsFolder = os.Getenv("ATTACHMENTS_FOLDER")
-
+	s.CanonicalURL = strings.ToLower(os.Getenv("CANONICAL_URL"))
+	s.CheckCSRFViaReferrer = s.Sitename != "displayworks" // almost always true for backwards compatibility
+	if len(os.Getenv("DISABLE_CSRF")) > 0 {               // for backwards compatibility
+		s.CheckCSRFViaReferrer = false
+	}
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = ":80"
