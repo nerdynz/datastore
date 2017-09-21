@@ -44,20 +44,22 @@ func New() *Datastore {
 	log.SetOutput(os.Stderr)
 	// Only log the warning severity or above.
 	log.SetLevel(log.DebugLevel)
-	if settings.ServerIsLVE {
-		logHook := &slackrus.SlackrusHook{
-			HookURL:        "https://hooks.slack.com/services/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",
-			AcceptedLevels: slackrus.LevelThreshold(log.DebugLevel),
-			Channel:        "#" + settings.Sitename + "-logs",
-			Username:       settings.ServerIs,
-		}
-		if settings.ServerIsDEV {
-			logHook.IconEmoji = ":hamster:"
-		} else {
-			logHook.IconEmoji = ":dog:"
-		}
-		log.AddHook(logHook)
+
+	channel := "#logs-" + settings.Sitename
+	emoji := ":dog:"
+	if settings.ServerIsDEV {
+		emoji = ":hamster:"
+		channel = "#logs" // dont care about the sitename
 	}
+
+	logHook := &slackrus.SlackrusHook{
+		HookURL:        settings.SlackLogURL,
+		AcceptedLevels: slackrus.LevelThreshold(log.ErrorLevel),
+		Channel:        channel,
+		IconEmoji:      emoji,
+		Username:       settings.Sitename,
+	}
+	log.AddHook(logHook)
 	log.Info("App Started. Server Is: " + settings.ServerIs)
 
 	store.Settings = settings
@@ -106,7 +108,9 @@ func getDBConnection(settings *Settings) *runner.DB {
 	dat.Strict = false
 
 	// Log any query over 10ms as warnings. (optional)
-	runner.LogQueriesThreshold = 1 * time.Microsecond
+	if settings.ServerIsDEV {
+		runner.LogQueriesThreshold = 1 * time.Microsecond
+	}
 
 	if settings.ServerIsLVE {
 		log.Info("migrating")
@@ -166,6 +170,7 @@ type Settings struct {
 	ServerPort           string
 	AttachmentsFolder    string
 	Proto                string
+	SlackLogURL          string
 	CheckCSRFViaReferrer bool
 }
 
@@ -189,7 +194,11 @@ func loadSettings() *Settings {
 	s.AttachmentsFolder = os.Getenv("ATTACHMENTS_FOLDER")
 	s.CanonicalURL = strings.ToLower(os.Getenv("CANONICAL_URL"))
 	s.CheckCSRFViaReferrer = s.Sitename != "displayworks" // almost always true for backwards compatibility
-	if len(os.Getenv("DISABLE_CSRF")) > 0 {               // for backwards compatibility
+	s.SlackLogURL = os.Getenv("SLACK_LOG_URL")
+	if s.SlackLogURL == "" {
+		s.SlackLogURL = "https://hooks.slack.com/services/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"
+	}
+	if len(os.Getenv("DISABLE_CSRF")) > 0 { // for backwards compatibility
 		s.CheckCSRFViaReferrer = false
 	}
 	port := os.Getenv("PORT")
