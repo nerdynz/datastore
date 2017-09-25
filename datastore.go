@@ -47,14 +47,16 @@ func New() *Datastore {
 
 	channel := "#logs-" + settings.Sitename
 	emoji := ":dog:"
+	acceptedLevels := slackrus.LevelThreshold(log.InfoLevel)
 	if settings.ServerIsDEV {
 		emoji = ":hamster:"
 		channel = "#logs" // dont care about the sitename
+		acceptedLevels = slackrus.LevelThreshold(log.ErrorLevel)
 	}
 
 	logHook := &slackrus.SlackrusHook{
 		HookURL:        settings.SlackLogURL,
-		AcceptedLevels: slackrus.LevelThreshold(log.ErrorLevel),
+		AcceptedLevels: acceptedLevels,
 		Channel:        channel,
 		IconEmoji:      emoji,
 		Username:       settings.Sitename,
