@@ -167,13 +167,17 @@ type Settings struct {
 	ServerIs             string
 	DSN                  string
 	CanonicalURL         string
+	WebsiteBaseURL       string
 	Sitename             string
 	EncKey               string
 	ServerPort           string
 	AttachmentsFolder    string
+	IsSecured            bool
 	Proto                string
 	SlackLogURL          string
 	CheckCSRFViaReferrer bool
+	EmailFromName        string
+	EmailFromEmail       string
 }
 
 func loadSettings() *Settings {
@@ -193,12 +197,32 @@ func loadSettings() *Settings {
 	s.DSN = os.Getenv("DATABASE_URL")
 	s.Sitename = os.Getenv("SITE_NAME")
 	s.EncKey = os.Getenv("SECURITY_ENCRYPTION_KEY")
+
+	s.EmailFromName = os.Getenv("EMAIL_FROM_NAME")
+	if s.EmailFromName == "" {
+		s.EmailFromName = "Josh Developer"
+	}
+	s.EmailFromEmail = os.Getenv("EMAIL_FROM_EMAIL")
+	if s.EmailFromEmail == "" {
+		s.EmailFromEmail = "josh@nerdy.co.nz"
+	}
+
 	s.AttachmentsFolder = os.Getenv("ATTACHMENTS_FOLDER")
 	s.CanonicalURL = strings.ToLower(os.Getenv("CANONICAL_URL"))
 	s.CheckCSRFViaReferrer = s.Sitename != "displayworks" // almost always true for backwards compatibility
 	s.SlackLogURL = os.Getenv("SLACK_LOG_URL")
+	s.IsSecured = (os.Getenv("IS_HTTPS") == "true")
+	s.Proto = "http://"
+	if s.IsSecured {
+		s.Proto = "https://"
+	}
 	if s.SlackLogURL == "" {
 		s.SlackLogURL = "https://hooks.slack.com/services/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"
+	}
+
+	s.WebsiteBaseURL = os.Getenv("WEBSITE_BASE_URL")
+	if s.WebsiteBaseURL == "" {
+		s.WebsiteBaseURL = s.Proto + s.CanonicalURL + "/"
 	}
 	if len(os.Getenv("DISABLE_CSRF")) > 0 { // for backwards compatibility
 		s.CheckCSRFViaReferrer = false
