@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/boltdb/bolt"
 	"github.com/johntdyer/slackrus"
 	_ "github.com/mattes/migrate/driver/postgres" //for migrations
 	"github.com/mattes/migrate/migrate"
@@ -28,6 +30,7 @@ type Datastore struct {
 	Renderer *render.Render
 	DB       *runner.DB
 	Cache    *redis.Client
+	Bolt     *bolt.DB
 	Settings *Settings
 	S3       *s3.S3
 }
@@ -68,7 +71,30 @@ func New() *Datastore {
 	store.DB = getDBConnection(settings)
 	store.Cache = getCacheConnection(settings)
 	store.S3 = getS3Connection()
+	store.Bolt = getBoltDB(settings)
 	return store
+}
+
+func getBoltDB(settings *Settings) *bolt.DB {
+	db, err := bolt.Open("keystore.db", 0600, nil)
+	if err != nil {
+		panic(err) // app can't run without this
+	}
+	tx, err := db.Begin(true)
+	if err != nil {
+		panic(err)
+	}
+	defer tx.Rollback()
+	_, err = tx.CreateBucketIfNotExists([]byte("attachments"))
+	if err != nil {
+		panic(err)
+	}
+	err = tx.Commit()
+	if err != nil {
+		panic(err)
+	}
+
+	return db
 }
 
 func getDBConnection(settings *Settings) *runner.DB {
@@ -172,6 +198,7 @@ type Settings struct {
 	EncKey               string
 	ServerPort           string
 	AttachmentsFolder    string
+	MaxImageWidth        int
 	IsSecured            bool
 	Proto                string
 	SlackLogURL          string
@@ -207,6 +234,14 @@ func loadSettings() *Settings {
 		s.EmailFromEmail = "josh@nerdy.co.nz"
 	}
 
+	s.MaxImageWidth = 1920
+	imgWidth := os.Getenv("MAX_IMAGE_WIDTH")
+	if imgWidth != "" {
+		newWidth, err := strconv.Atoi(imgWidth)
+		if err == nil {
+			s.MaxImageWidth = newWidth
+		}
+	}
 	s.AttachmentsFolder = os.Getenv("ATTACHMENTS_FOLDER")
 	s.CanonicalURL = strings.ToLower(os.Getenv("CANONICAL_URL"))
 	s.CheckCSRFViaReferrer = s.Sitename != "displayworks" // almost always true for backwards compatibility
