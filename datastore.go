@@ -10,10 +10,6 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/johntdyer/slackrus"
 	_ "github.com/mattes/migrate/driver/postgres" //for migrations
 	"github.com/mattes/migrate/migrate"
@@ -30,7 +26,6 @@ type Datastore struct {
 	DB       *runner.DB
 	Cache    *redis.Client
 	Settings *Settings
-	S3       *s3.S3
 }
 
 // New - returns a new datastore which contains redis, database, view globals and settings.
@@ -68,7 +63,7 @@ func New() *Datastore {
 	store.Settings = settings
 	store.DB = getDBConnection(settings)
 	store.Cache = getCacheConnection(settings)
-	store.S3 = getS3Connection()
+	// store.S3 = getS3Connection()
 	return store
 }
 
@@ -226,9 +221,6 @@ func loadSettings() *Settings {
 	if s.IsSecured {
 		s.Proto = "https://"
 	}
-	if s.SlackLogURL == "" {
-		s.SlackLogURL = "https://hooks.slack.com/services/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"
-	}
 
 	s.WebsiteBaseURL = os.Getenv("WEBSITE_BASE_URL")
 	if s.WebsiteBaseURL == "" {
@@ -251,27 +243,27 @@ func (s *Settings) Get(setting string) string {
 	return os.Getenv(setting)
 }
 
-func getS3Connection() *s3.S3 {
-	id := os.Getenv("AWS_ACCESS_KEY_ID")
-	if id == "" {
-		log.Error("AWS_ACCESS_KEY_ID not specified")
-	}
-	key := os.Getenv("AWS_SECRET_ACCESS_KEY")
-	if key == "" {
-		log.Error("AWS_SECRET_ACCESS_KEY not specified")
-	}
-	region := os.Getenv("AWS_REGION")
-	if region == "" {
-		log.Error("AWS_REGION not specified")
-	}
-	token := ""
+// func getS3Connection() *s3.S3 {
+// 	id := os.Getenv("AWS_ACCESS_KEY_ID")
+// 	if id == "" {
+// 		log.Error("AWS_ACCESS_KEY_ID not specified")
+// 	}
+// 	key := os.Getenv("AWS_SECRET_ACCESS_KEY")
+// 	if key == "" {
+// 		log.Error("AWS_SECRET_ACCESS_KEY not specified")
+// 	}
+// 	region := os.Getenv("AWS_REGION")
+// 	if region == "" {
+// 		log.Error("AWS_REGION not specified")
+// 	}
+// 	token := ""
 
-	creds := credentials.NewStaticCredentials(id, key, token)
-	_, err := creds.Get()
-	if err != nil {
-		log.Error("AWS authentication error")
-	}
-	cfg := aws.NewConfig().WithRegion(region).WithCredentials(creds)
-	s := s3.New(session.New(), cfg)
-	return s
-}
+// 	creds := credentials.NewStaticCredentials(id, key, token)
+// 	_, err := creds.Get()
+// 	if err != nil {
+// 		log.Error("AWS authentication error")
+// 	}
+// 	cfg := aws.NewConfig().WithRegion(region).WithCredentials(creds)
+// 	s := s3.New(session.New(), cfg)
+// 	return s
+// }
