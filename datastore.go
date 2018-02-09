@@ -175,6 +175,7 @@ type Settings struct {
 	CheckCSRFViaReferrer bool
 	EmailFromName        string
 	EmailFromEmail       string
+	IsSiteBound          bool
 }
 
 func loadSettings() *Settings {
@@ -221,7 +222,7 @@ func loadSettings() *Settings {
 	if s.IsSecured {
 		s.Proto = "https://"
 	}
-
+	s.IsSiteBound = strings.ToLower(os.Getenv("IS_SITE_BOUND")) == "true"
 	s.WebsiteBaseURL = os.Getenv("WEBSITE_BASE_URL")
 	if s.WebsiteBaseURL == "" {
 		s.WebsiteBaseURL = s.Proto + s.CanonicalURL + "/"
