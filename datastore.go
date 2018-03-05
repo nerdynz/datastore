@@ -30,6 +30,13 @@ type Datastore struct {
 
 // New - returns a new datastore which contains redis, database, view globals and settings.
 func New() *Datastore {
+	store := Simple()
+	store.DB = getDBConnection(store.Settings)
+	store.Cache = getCacheConnection(store.Settings)
+	return store
+}
+
+func Simple() *Datastore {
 	store := &Datastore{}
 	settings := loadSettings()
 
@@ -61,8 +68,7 @@ func New() *Datastore {
 	log.Info("App Started. Server Is: " + settings.ServerIs)
 
 	store.Settings = settings
-	store.DB = getDBConnection(settings)
-	store.Cache = getCacheConnection(settings)
+
 	// store.S3 = getS3Connection()
 	return store
 }
