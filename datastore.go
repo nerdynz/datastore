@@ -22,10 +22,11 @@ import (
 )
 
 type Datastore struct {
-	Renderer *render.Render
-	DB       *runner.DB
-	Cache    *redis.Client
-	Settings *Settings
+	Renderer  *render.Render
+	DB        *runner.DB
+	Cache     *redis.Client
+	Settings  *Settings
+	Websocket Websocket
 }
 
 // New - returns a new datastore which contains redis, database, view globals and settings.
@@ -274,3 +275,17 @@ func (s *Settings) Get(setting string) string {
 // 	s := s3.New(session.New(), cfg)
 // 	return s
 // }
+
+type Websocket interface {
+	Broadcast(string, string) error
+}
+
+func (ds *Datastore) GetCacheValue(key string) (string, error) {
+	val := ds.Cache.Get(key)
+	return val.Result()
+}
+
+func (ds *Datastore) SetCacheValue(key string, value interface{}, duration time.Duration) (string, error) {
+	val := ds.Cache.Set(key, value, duration)
+	return val.Result()
+}
