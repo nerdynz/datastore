@@ -77,8 +77,6 @@ func Simple() *Datastore {
 func getDBConnection(settings *Settings) *runner.DB {
 	//get url from ENV in the following format postgres://user:pass@192.168.8.8:5432/spaceio")
 	dbURL := os.Getenv("DATABASE_URL")
-	log.Info(dbURL)
-
 	u, err := url.Parse(dbURL)
 	if err != nil {
 		log.Error(err)
