@@ -37,6 +37,11 @@ func New() *Datastore {
 	return store
 }
 
+func (ds Datastore) Cleanup() {
+	ds.DB.DB.Close()
+	ds.Cache.Close()
+}
+
 func Simple() *Datastore {
 	store := &Datastore{}
 	settings := loadSettings()
