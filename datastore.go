@@ -287,6 +287,10 @@ func (ds *Datastore) GetCacheValue(key string) (string, error) {
 	val := ds.Cache.Get(key)
 	return val.Result()
 }
+func (ds *Datastore) GetCacheBytes(key string) ([]byte, error) {
+	val := ds.Cache.Get(key)
+	return val.Bytes()
+}
 
 func (ds *Datastore) SetCacheValue(key string, value interface{}, duration time.Duration) (string, error) {
 	val := ds.Cache.Set(key, value, duration)
