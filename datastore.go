@@ -9,15 +9,15 @@ import (
 	"strings"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/johntdyer/slackrus"
-	_ "github.com/mattes/migrate/driver/postgres" //for migrations
-	"github.com/mattes/migrate/migrate"
+	log "github.com/sirupsen/logrus"
 	"github.com/unrolled/render"
+	_ "gopkg.in/mattes/migrate.v1/driver/postgres" //for migrations
+	"gopkg.in/mattes/migrate.v1/migrate"
 
 	dotenv "github.com/joho/godotenv"
-	dat "gopkg.in/mgutz/dat.v1"
-	runner "gopkg.in/mgutz/dat.v1/sqlx-runner"
+	dat "github.com/nerdynz/dat"
+	runner "github.com/nerdynz/dat/sqlx-runner"
 	redis "gopkg.in/redis.v5"
 )
 
