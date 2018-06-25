@@ -17,6 +17,7 @@ import (
 
 	dotenv "github.com/joho/godotenv"
 	dat "github.com/nerdynz/dat"
+	"github.com/nerdynz/dat/kvs"
 	runner "github.com/nerdynz/dat/sqlx-runner"
 	redis "gopkg.in/redis.v5"
 )
@@ -32,8 +33,8 @@ type Datastore struct {
 // New - returns a new datastore which contains redis, database, view globals and settings.
 func New() *Datastore {
 	store := Simple()
-	store.DB = getDBConnection(store.Settings)
 	store.Cache = getCacheConnection(store.Settings)
+	store.DB = getDBConnection(store.Settings)
 	return store
 }
 
@@ -99,10 +100,21 @@ func getDBConnection(settings *Settings) *runner.DB {
 	err = db.Ping()
 	if err != nil {
 		log.Error(err)
+		panic(err)
 	}
 	log.Info("database running")
 	// ensures the database can be pinged with an exponential backoff (15 min)
 	runner.MustPing(db)
+
+	if settings.CacheNamespace != "" {
+		store, err := kvs.NewRedisStore(settings.CacheNamespace, ":6379", "")
+		if err != nil {
+			log.Error(err)
+			panic(err)
+		}
+		log.Info("USING CACHE", settings.CacheNamespace)
+		runner.SetCache(store)
+	}
 
 	// set to reasonable values for production
 	db.SetMaxIdleConns(4)
@@ -186,6 +198,7 @@ type Settings struct {
 	EmailFromName        string
 	EmailFromEmail       string
 	IsSiteBound          bool
+	CacheNamespace       string
 }
 
 func loadSettings() *Settings {
@@ -205,6 +218,7 @@ func loadSettings() *Settings {
 	s.DSN = os.Getenv("DATABASE_URL")
 	s.Sitename = os.Getenv("SITE_NAME")
 	s.EncKey = os.Getenv("SECURITY_ENCRYPTION_KEY")
+	s.CacheNamespace = os.Getenv("CACHE_NAMESPACE")
 
 	s.EmailFromName = os.Getenv("EMAIL_FROM_NAME")
 	if s.EmailFromName == "" {
