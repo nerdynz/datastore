@@ -2,6 +2,7 @@ package datastore
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net"
 	"net/url"
 	"os"
@@ -30,6 +31,47 @@ type Datastore struct {
 	Websocket Websocket
 }
 
+type Logger struct {
+	errLog string
+}
+
+func NewLogger() *Logger {
+	return &Logger{}
+}
+
+func (l *Logger) Write(b []byte) (int, error) {
+	l.errLog += string(b) + "\n"
+	return len(b), nil
+}
+
+func (l *Logger) LogBytes(b []byte) {
+	l.errLog += string(b) + "\n"
+}
+
+func (l *Logger) LogText(text string) {
+	l.errLog += text
+}
+
+func (l *Logger) LogValue(val interface{}) {
+	b, err := json.MarshalIndent(val, "", "  ")
+	if err != nil {
+		l.LogText("failed to marshal val")
+	}
+	l.LogBytes(b)
+}
+
+func (l *Logger) ResetLog() {
+	l.errLog = "" //reset it
+}
+
+func (l *Logger) PrintLog() {
+	log.Info(l.errLog)
+}
+
+func (l *Logger) GetLog() string {
+	return l.errLog
+}
+
 // New - returns a new datastore which contains redis, database, view globals and settings.
 func New() *Datastore {
 	store := Simple()
@@ -49,7 +91,7 @@ func Simple() *Datastore {
 
 	// - LOGGING
 	// Log as JSON instead of the default ASCII formatter.
-	log.SetFormatter(&log.JSONFormatter{})
+	// log.SetFormatter(&log.JSONFormatter{})
 	// Output to stderr instead of stdout, could also be a file.
 	log.SetOutput(os.Stderr)
 	// Only log the warning severity or above.
@@ -199,6 +241,7 @@ type Settings struct {
 	EmailFromEmail       string
 	IsSiteBound          bool
 	CacheNamespace       string
+	LoggingEnabled       bool
 }
 
 func loadSettings() *Settings {
@@ -207,6 +250,7 @@ func loadSettings() *Settings {
 		panic(err)
 	}
 	s := &Settings{}
+	s.LoggingEnabled = (os.Getenv("LOGGING_ENABLED") == "true")
 	s.ServerIsDEV = (os.Getenv("IS_DEV") == "true")
 	s.ServerIsLVE = !s.ServerIsDEV
 	if s.ServerIsDEV {
