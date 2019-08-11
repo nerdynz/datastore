@@ -17,9 +17,9 @@ import (
 	"gopkg.in/mattes/migrate.v1/migrate"
 
 	dotenv "github.com/joho/godotenv"
-	dat "github.com/nerdynz/dat"
-	"github.com/nerdynz/dat/kvs"
-	runner "github.com/nerdynz/dat/sqlx-runner"
+	dat "github.com/bkono/dat"
+	"github.com/bkono/dat/kvs"
+	runner "github.com/bkono/dat/sqlx-runner"
 	redis "gopkg.in/redis.v5"
 )
 
