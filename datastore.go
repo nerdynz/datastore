@@ -17,7 +17,7 @@ import (
 	"gopkg.in/mattes/migrate.v1/migrate"
 
 	dotenv "github.com/joho/godotenv"
-	dat "github.com/nerdynz/dat"
+	dat "github.com/nerdynz/dat/dat"
 	"github.com/nerdynz/dat/kvs"
 	runner "github.com/nerdynz/dat/sqlx-runner"
 	redis "gopkg.in/redis.v5"
@@ -163,7 +163,7 @@ func getDBConnection(settings *Settings) *runner.DB {
 	db.SetMaxOpenConns(16)
 
 	// set this to enable interpolation
-	dat.EnableInterpolation = true
+	// dat.EnableInterpolation = true
 
 	// set to check things like sessions closing.
 	// Should be disabled in production/release builds.
