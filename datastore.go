@@ -16,10 +16,10 @@ import (
 	_ "gopkg.in/mattes/migrate.v1/driver/postgres" //for migrations
 	"gopkg.in/mattes/migrate.v1/migrate"
 
+	dat "github.com/helloeave/dat/dat"
+	"github.com/helloeave/dat/kvs"
+	runner "github.com/helloeave/dat/sqlx-runner"
 	dotenv "github.com/joho/godotenv"
-	dat "github.com/nerdynz/dat/dat"
-	"github.com/nerdynz/dat/kvs"
-	runner "github.com/nerdynz/dat/sqlx-runner"
 	redis "gopkg.in/redis.v5"
 )
 
@@ -228,6 +228,7 @@ type Settings struct {
 	DSN                  string
 	CanonicalURL         string
 	WebsiteBaseURL       string
+	ImageBaseURL         string
 	Sitename             string
 	EncKey               string
 	ServerPort           string
@@ -281,6 +282,8 @@ func loadSettings() *Settings {
 			s.MaxImageWidth = newWidth
 		}
 	}
+
+	s.ImageBaseURL = os.Getenv("IMAGE_BASE_URL")
 	s.AttachmentsFolder = os.Getenv("ATTACHMENTS_FOLDER")
 	s.CanonicalURL = strings.ToLower(os.Getenv("CANONICAL_URL"))
 	s.CheckCSRFViaReferrer = s.Sitename != "displayworks" // almost always true for backwards compatibility
