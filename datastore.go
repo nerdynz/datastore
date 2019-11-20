@@ -2,138 +2,135 @@ package datastore
 
 import (
 	"database/sql"
-	"encoding/json"
+	"errors"
+	"io"
 	"net"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/johntdyer/slackrus"
-	log "github.com/sirupsen/logrus"
-	"github.com/unrolled/render"
 	_ "gopkg.in/mattes/migrate.v1/driver/postgres" //for migrations
 	"gopkg.in/mattes/migrate.v1/migrate"
 
-	dat "github.com/helloeave/dat/dat"
-	"github.com/helloeave/dat/kvs"
-	runner "github.com/helloeave/dat/sqlx-runner"
-	dotenv "github.com/joho/godotenv"
-	redis "gopkg.in/redis.v5"
+	dat "github.com/nerdynz/dat/dat"
+	"github.com/nerdynz/dat/kvs"
+	runner "github.com/nerdynz/dat/sqlx-runner"
+	"github.com/nerdynz/trove"
+	"github.com/shomali11/xredis"
 )
 
+type Websocket interface {
+	Broadcast(string, string) error
+}
+
+// Logger - designed as a drop in for logrus with some other backwards compat stuff
+type Logger interface {
+	SetOutput(out io.Writer)
+	Print(args ...interface{})
+	Printf(format string, args ...interface{})
+	Println(args ...interface{})
+	Info(args ...interface{})
+	Infof(format string, args ...interface{})
+	Infoln(args ...interface{})
+	Warn(args ...interface{})
+	Warnf(format string, args ...interface{})
+	Warnln(args ...interface{})
+	Error(args ...interface{})
+	Errorf(format string, args ...interface{})
+	Errorln(args ...interface{})
+}
+
 type Datastore struct {
-	Renderer  *render.Render
 	DB        *runner.DB
-	Cache     *redis.Client
-	Settings  *Settings
+	Cache     *Cache
+	Settings  Settings
 	Websocket Websocket
+	Logger    Logger
 }
 
-type Logger struct {
-	errLog string
+type Settings interface {
+	Get(key string) string
+	GetDuration(key string) time.Duration
+	GetBool(key string) bool
+	IsProduction() bool
+	IsDevelopment() bool
 }
 
-func NewLogger() *Logger {
-	return &Logger{}
-}
+// type Logger struct {
+// 	errLog string
+// }
 
-func (l *Logger) Write(b []byte) (int, error) {
-	l.errLog += string(b) + "\n"
-	return len(b), nil
-}
+// func NewLogger() *Logger {
+// 	return &Logger{}
+// }
 
-func (l *Logger) LogBytes(b []byte) {
-	l.errLog += string(b) + "\n"
-}
+// func (l *Logger) Write(b []byte) (int, error) {
+// 	l.errLog += string(b) + "\n"
+// 	return len(b), nil
+// }
 
-func (l *Logger) LogText(text string) {
-	l.errLog += text
-}
+// func (l *Logger) LogBytes(b []byte) {
+// 	l.errLog += string(b) + "\n"
+// }
 
-func (l *Logger) LogValue(val interface{}) {
-	b, err := json.MarshalIndent(val, "", "  ")
-	if err != nil {
-		l.LogText("failed to marshal val")
-	}
-	l.LogBytes(b)
-}
+// func (l *Logger) LogText(text string) {
+// 	l.errLog += text
+// }
 
-func (l *Logger) ResetLog() {
-	l.errLog = "" //reset it
-}
+// func (l *Logger) LogValue(val interface{}) {
+// 	b, err := json.MarshalIndent(val, "", "  ")
+// 	if err != nil {
+// 		l.LogText("failed to marshal val")
+// 	}
+// 	l.LogBytes(b)
+// }
 
-func (l *Logger) PrintLog() {
-	log.Info(l.errLog)
-}
+// func (l *Logger) ResetLog() {
+// 	l.errLog = "" //reset it
+// }
 
-func (l *Logger) GetLog() string {
-	return l.errLog
-}
+// func (l *Logger) PrintLog() {
+// 	log.Info(l.errLog)
+// }
 
-// New - returns a new datastore which contains redis, database, view globals and settings.
-func New() *Datastore {
+// func (l *Logger) GetLog() string {
+// 	return l.errLog
+// }
+
+// New - returns a new datastore which contains redis, database and settings.
+// everything in the datastore should be concurrent safe and stand within thier own right. i.e. accessible at anypoint from the app
+func New(logger Logger, ws Websocket) *Datastore {
 	store := Simple()
-	store.Cache = getCacheConnection(store.Settings)
-	store.DB = getDBConnection(store.Settings)
+	store.Logger = logger
+	store.Cache = getCache(store)
+	store.DB = getDBConnection(store)
 	return store
 }
 
-func (ds Datastore) Cleanup() {
+func (ds *Datastore) Cleanup() {
 	ds.DB.DB.Close()
-	ds.Cache.Close()
+	ds.Cache.Client.Close()
 }
 
 func Simple() *Datastore {
 	store := &Datastore{}
-	settings := loadSettings()
-
-	// - LOGGING
-	// Log as JSON instead of the default ASCII formatter.
-	// log.SetFormatter(&log.JSONFormatter{})
-	// Output to stderr instead of stdout, could also be a file.
-	log.SetOutput(os.Stderr)
-	// Only log the warning severity or above.
-	log.SetLevel(log.DebugLevel)
-
-	channel := "#logs-" + settings.Sitename
-	emoji := ":dog:"
-	acceptedLevels := slackrus.LevelThreshold(log.InfoLevel)
-	if settings.ServerIsDEV {
-		emoji = ":hamster:"
-		channel = "#logs" // dont care about the sitename
-		acceptedLevels = slackrus.LevelThreshold(log.ErrorLevel)
-	}
-
-	logHook := &slackrus.SlackrusHook{
-		HookURL:        settings.SlackLogURL,
-		AcceptedLevels: acceptedLevels,
-		Channel:        channel,
-		IconEmoji:      emoji,
-		Username:       settings.Sitename,
-	}
-	log.AddHook(logHook)
-	log.Info("App Started. Server Is: " + settings.ServerIs)
-
-	store.Settings = settings
-
-	// store.S3 = getS3Connection()
+	store.Settings = trove.Load()
 	return store
 }
 
-func getDBConnection(settings *Settings) *runner.DB {
+func getDBConnection(store *Datastore) *runner.DB {
 	//get url from ENV in the following format postgres://user:pass@192.168.8.8:5432/spaceio")
-	dbURL := os.Getenv("DATABASE_URL")
+	dbURL := store.Settings.Get("DATABASE_URL")
 	u, err := url.Parse(dbURL)
 	if err != nil {
-		log.Error(err)
+		store.Logger.Error(err)
 	}
 
 	username := u.User.Username()
 	pass, isPassSet := u.User.Password()
 	if !isPassSet {
-		log.Error("no database password")
+		store.Logger.Error("no database password")
 	}
 	host, port, _ := net.SplitHostPort(u.Host)
 	dbName := strings.Replace(u.Path, "/", "", 1)
@@ -141,21 +138,25 @@ func getDBConnection(settings *Settings) *runner.DB {
 	db, _ := sql.Open("postgres", "dbname="+dbName+" user="+username+" password="+pass+" host="+host+" port="+port+" sslmode=disable")
 	err = db.Ping()
 	if err != nil {
-		log.Error(err)
+		store.Logger.Error(err)
 		panic(err)
 	}
-	log.Info("database running")
+	store.Logger.Info("database running")
 	// ensures the database can be pinged with an exponential backoff (15 min)
 	runner.MustPing(db)
 
-	if settings.CacheNamespace != "" {
-		store, err := kvs.NewRedisStore(settings.CacheNamespace, ":6379", "")
+	if store.Settings.Get("CACHE_NAMESPACE") != "" {
+		redisUrl := ":6379"
+		if store.Settings.Get("CACHE_URL") != "" {
+			redisUrl = store.Settings.Get("CACHE_URL")
+		}
+		cache, err := kvs.NewRedisStore(store.Settings.Get("CACHE_NAMESPACE"), redisUrl, "")
 		if err != nil {
-			log.Error(err)
+			store.Logger.Error(err)
 			panic(err)
 		}
-		log.Info("USING CACHE", settings.CacheNamespace)
-		runner.SetCache(store)
+		store.Logger.Info("USING CACHE", store.Settings.Get("CACHE_NAMESPACE"))
+		runner.SetCache(cache)
 	}
 
 	// set to reasonable values for production
@@ -163,156 +164,77 @@ func getDBConnection(settings *Settings) *runner.DB {
 	db.SetMaxOpenConns(16)
 
 	// set this to enable interpolation
-	// dat.EnableInterpolation = true
+	dat.EnableInterpolation = true
 
-	// set to check things like sessions closing.
-	// Should be disabled in production/release builds.
-	dat.Strict = false
-
-	// Log any query over 10ms as warnings. (optional)
-	if settings.ServerIsDEV {
-		runner.LogQueriesThreshold = 1 * time.Microsecond
-	}
-
-	if settings.ServerIsLVE {
-		log.Info("migrating")
-		errs, ok := migrate.UpSync(settings.DSN+"?sslmode=disable", "./server/models/migrations")
+	if store.Settings.IsProduction() {
+		// PRODUCTION
+		errs, ok := migrate.UpSync(dbURL+"?sslmode=disable", "./server/models/migrations")
 		if !ok {
 			finalError := ""
 			for _, err := range errs {
 				finalError += err.Error() + "\n"
 			}
-			log.Error(finalError)
+			store.Logger.Error(finalError)
 		}
+	} else {
+		// DEV`
+		// set to check things like sessions closing.
+		// Should be disabled in production/release builds.
+		dat.Strict = true
+
+		dat.SetDebugLogger(store.Logger.Warnf)
+		dat.SetSQLLogger(store.Logger.Infof)
+		dat.SetErrorLogger(store.Logger.Errorf)
+		// Log any query over 10ms as warnings. (optional)
+		runner.LogQueriesThreshold = 1 * time.Microsecond // LOG EVERYTHING ON DEV
 	}
 
 	// db connection
 	return runner.NewDB(db, "postgres")
 }
 
-func getCacheConnection(settings *Settings) *redis.Client {
-
-	opts := &redis.Options{
-		Addr:     "localhost:6379",
+func getCache(store *Datastore) *Cache {
+	opts := &xredis.Options{
+		Host:     "localhost",
+		Port:     6379,
 		Password: "", // no password set
-		DB:       0,  // use default DB
+		// DB:       0,  // use default DB
 	}
 
-	url := os.Getenv("REDIS_URL")
-	if url != "" {
-		newOpts, err := redis.ParseURL(url)
-		if err == nil {
-			opts = newOpts
-		} else {
-			log.Error(err)
+	redisURL := store.Settings.Get("CACHE_URL")
+	if redisURL != "" {
+		opts = &xredis.Options{}
+		u, err := url.Parse(redisURL)
+		if err != nil {
+			store.Logger.Error(err)
 			return nil
 		}
+		opts.Host = u.Host
+		if strings.Contains(opts.Host, ":") {
+			opts.Host = strings.Split(opts.Host, ":")[0]
+		}
+		p, _ := u.User.Password()
+		opts.Password = p
+		// opts.User = u.User.Username()
+		port, err := strconv.Atoi(u.Port())
+		if err != nil {
+			store.Logger.Error("cache couldn't parse port")
+			return nil
+		}
+		opts.Port = port
 	}
 
-	client := redis.NewClient(opts)
-	pong, err := client.Ping().Result()
+	client := xredis.SetupClient(opts)
+	pong, err := client.Ping()
 	if err != nil {
-		log.Error(err)
+		store.Logger.Error(err)
 		return nil
 	}
 
-	log.Info("cache running", pong)
-	return client
-}
-
-// Settings - common settings used around the site. Currently loaded into the datastore object
-type Settings struct {
-	ServerIsDEV          bool
-	ServerIsLVE          bool
-	ServerIs             string
-	DSN                  string
-	CanonicalURL         string
-	WebsiteBaseURL       string
-	ImageBaseURL         string
-	Sitename             string
-	EncKey               string
-	ServerPort           string
-	AttachmentsFolder    string
-	MaxImageWidth        int
-	IsSecured            bool
-	Proto                string
-	SlackLogURL          string
-	CheckCSRFViaReferrer bool
-	EmailFromName        string
-	EmailFromEmail       string
-	IsSiteBound          bool
-	CacheNamespace       string
-	LoggingEnabled       bool
-}
-
-func loadSettings() *Settings {
-	err := dotenv.Load()
-	if err != nil {
-		panic(err)
+	store.Logger.Info("cache running", pong)
+	return &Cache{
+		Client: client,
 	}
-	s := &Settings{}
-	s.LoggingEnabled = (os.Getenv("LOGGING_ENABLED") == "true")
-	s.ServerIsDEV = (os.Getenv("IS_DEV") == "true")
-	s.ServerIsLVE = !s.ServerIsDEV
-	if s.ServerIsDEV {
-		s.ServerIs = "DEV"
-	}
-	if s.ServerIsLVE {
-		s.ServerIs = "LVE"
-	}
-	s.DSN = os.Getenv("DATABASE_URL")
-	s.Sitename = os.Getenv("SITE_NAME")
-	s.EncKey = os.Getenv("SECURITY_ENCRYPTION_KEY")
-	s.CacheNamespace = os.Getenv("CACHE_NAMESPACE")
-
-	s.EmailFromName = os.Getenv("EMAIL_FROM_NAME")
-	if s.EmailFromName == "" {
-		s.EmailFromName = "Josh Developer"
-	}
-	s.EmailFromEmail = os.Getenv("EMAIL_FROM_EMAIL")
-	if s.EmailFromEmail == "" {
-		s.EmailFromEmail = "josh@nerdy.co.nz"
-	}
-
-	s.MaxImageWidth = 1920
-	imgWidth := os.Getenv("MAX_IMAGE_WIDTH")
-	if imgWidth != "" {
-		newWidth, err := strconv.Atoi(imgWidth)
-		if err == nil {
-			s.MaxImageWidth = newWidth
-		}
-	}
-
-	s.ImageBaseURL = os.Getenv("IMAGE_BASE_URL")
-	s.AttachmentsFolder = os.Getenv("ATTACHMENTS_FOLDER")
-	s.CanonicalURL = strings.ToLower(os.Getenv("CANONICAL_URL"))
-	s.CheckCSRFViaReferrer = s.Sitename != "displayworks" // almost always true for backwards compatibility
-	s.SlackLogURL = os.Getenv("SLACK_LOG_URL")
-	s.IsSecured = (os.Getenv("IS_HTTPS") == "true")
-	s.Proto = "http://"
-	if s.IsSecured {
-		s.Proto = "https://"
-	}
-	s.IsSiteBound = strings.ToLower(os.Getenv("IS_SITE_BOUND")) == "true"
-	s.WebsiteBaseURL = os.Getenv("WEBSITE_BASE_URL")
-	if s.WebsiteBaseURL == "" {
-		s.WebsiteBaseURL = s.Proto + s.CanonicalURL + "/"
-	}
-	if len(os.Getenv("DISABLE_CSRF")) > 0 { // for backwards compatibility
-		s.CheckCSRFViaReferrer = false
-	}
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = ":80"
-	} else {
-		port = ":" + port // append the :
-	}
-	s.ServerPort = port
-	return s
-}
-
-func (s *Settings) Get(setting string) string {
-	return os.Getenv(setting)
 }
 
 // func getS3Connection() *s3.S3 {
@@ -340,20 +262,49 @@ func (s *Settings) Get(setting string) string {
 // 	return s
 // }
 
-type Websocket interface {
-	Broadcast(string, string) error
+type Cache struct {
+	Client *xredis.Client
 }
 
-func (ds *Datastore) GetCacheValue(key string) (string, error) {
-	val := ds.Cache.Get(key)
-	return val.Result()
-}
-func (ds *Datastore) GetCacheBytes(key string) ([]byte, error) {
-	val := ds.Cache.Get(key)
-	return val.Bytes()
+func (cache *Cache) Get(key string) (string, bool, error) {
+	val, ok, err := cache.Client.Get(key)
+	if val == "" {
+		return "", false, errors.New("no value for [" + key + "]")
+	}
+	return val, ok, err
 }
 
-func (ds *Datastore) SetCacheValue(key string, value interface{}, duration time.Duration) (string, error) {
-	val := ds.Cache.Set(key, value, duration)
-	return val.Result()
+func (cache *Cache) Expire(key string) (bool, error) {
+	ok, err := cache.Client.Expire(key, 1)
+	return ok, err
+}
+
+func (cache *Cache) GetBytes(key string) ([]byte, bool, error) {
+	val, ok, err := cache.Get(key)
+	if ok {
+		return []byte(val), ok, err
+	}
+
+	if err == nil && !ok {
+		return nil, false, errors.New("Not Found")
+	}
+
+	return nil, ok, err
+}
+
+func (cache *Cache) Set(key string, value string, duration time.Duration) (bool, error) {
+	secs := int64(duration / time.Second)
+	ok, err := cache.Client.SetEx(key, value, secs)
+	if !ok {
+		if strings.Contains(err.Error(), "invalid expire time in set") {
+			return ok, errors.New("Invalid expire timeout in seconds [" + strconv.Itoa(int(secs)) + "]")
+		}
+	}
+	return ok, err
+}
+
+func (cache *Cache) SetBytes(key string, value []byte, duration time.Duration) (bool, error) {
+	result := string(value[:])
+	val, err := cache.Set(key, result, duration)
+	return val, err
 }
