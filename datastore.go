@@ -173,7 +173,7 @@ func getDBConnection(store *Datastore) *runner.DB {
 
 	if host == "GCLOUD_SQL_INSTANCE" {
 		// USE THE GCLOUD_SQL_INSTANCE SETTING instead... e.g. host= /cloudsql/INSTANCE_CONNECTION_NAME // JC I wonder if it is always /cloudsql
-		host = store.Settings.Get("GCLOUD_SQL_INSTANCE")
+		host = "/cloudsql" + store.Settings.Get("GCLOUD_SQL_INSTANCE")
 	}
 
 	dbStr := "dbname=" + dbName + " user=" + username + " host=" + host
