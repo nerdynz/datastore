@@ -171,6 +171,13 @@ func getDBConnection(store *Datastore) *runner.DB {
 	host, port, _ := net.SplitHostPort(u.Host)
 	dbName := strings.Replace(u.Path, "/", "", 1)
 
+	if host == "GCLOUD_SQL_INSTANCE" {
+		// USE THE GCLOUD_SQL_INSTANCE SETTING instead... e.g. host= /cloudsql/INSTANCE_CONNECTION_NAME // JC I wonder if it is always /cloudsql
+		host = store.Settings.Get("GCLOUD_SQL_INSTANCE")
+	}
+
+	store.Logger.Info("dbname=" + dbName + " user=" + username + " host=" + host + " port=" + port + " sslmode=disable") // no pass
+
 	db, _ := sql.Open("postgres", "dbname="+dbName+" user="+username+" password="+pass+" host="+host+" port="+port+" sslmode=disable")
 	err = db.Ping()
 	if err != nil {
