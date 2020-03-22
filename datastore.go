@@ -57,6 +57,18 @@ type Settings interface {
 	IsDevelopment() bool
 }
 
+func (ds *Datastore) TurnOnLogging() {
+	dat.SetDebugLogger(ds.Logger.Warnf)
+	dat.SetSQLLogger(ds.Logger.Infof)
+	dat.SetErrorLogger(ds.Logger.Errorf)
+}
+
+func (ds *Datastore) TurnOffLogging() {
+	dat.SetDebugLogger(nil)
+	dat.SetSQLLogger(nil)
+	dat.SetErrorLogger(nil)
+}
+
 // type Logger struct {
 // 	errLog string
 // }
@@ -103,6 +115,30 @@ type Settings interface {
 func New(logger Logger, ws Websocket) *Datastore {
 	store := Simple()
 	store.Logger = logger
+
+	logger.Info("Current IP Addresses")
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		logger.Error("Failed to load interfaces", err)
+	}
+	for _, i := range ifaces {
+		addrs, err := i.Addrs()
+		if err != nil {
+			logger.Error("Failed to load addresses", err)
+		}
+		// handle err
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			logger.Info("ip: ", ip.String())
+		}
+	}
+
 	store.Cache = getCache(store)
 	store.DB = getDBConnection(store)
 	return store
@@ -182,11 +218,8 @@ func getDBConnection(store *Datastore) *runner.DB {
 		// Should be disabled in production/release builds.
 		dat.Strict = true
 
-		dat.SetDebugLogger(store.Logger.Warnf)
-		dat.SetSQLLogger(store.Logger.Infof)
-		dat.SetErrorLogger(store.Logger.Errorf)
 		// Log any query over 10ms as warnings. (optional)
-		runner.LogQueriesThreshold = 1 * time.Microsecond // LOG EVERYTHING ON DEV
+		// runner.LogQueriesThreshold = 1 * time.Microsecond // LOG EVERYTHING ON DEV // turn it off and on with a flag
 	}
 
 	// db connection
@@ -236,31 +269,6 @@ func getCache(store *Datastore) *Cache {
 		Client: client,
 	}
 }
-
-// func getS3Connection() *s3.S3 {
-// 	id := os.Getenv("AWS_ACCESS_KEY_ID")
-// 	if id == "" {
-// 		log.Error("AWS_ACCESS_KEY_ID not specified")
-// 	}
-// 	key := os.Getenv("AWS_SECRET_ACCESS_KEY")
-// 	if key == "" {
-// 		log.Error("AWS_SECRET_ACCESS_KEY not specified")
-// 	}
-// 	region := os.Getenv("AWS_REGION")
-// 	if region == "" {
-// 		log.Error("AWS_REGION not specified")
-// 	}
-// 	token := ""
-
-// 	creds := credentials.NewStaticCredentials(id, key, token)
-// 	_, err := creds.Get()
-// 	if err != nil {
-// 		log.Error("AWS authentication error")
-// 	}
-// 	cfg := aws.NewConfig().WithRegion(region).WithCredentials(creds)
-// 	s := s3.New(session.New(), cfg)
-// 	return s
-// }
 
 type Cache struct {
 	Client *xredis.Client
