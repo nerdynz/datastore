@@ -176,9 +176,13 @@ func getDBConnection(store *Datastore) *runner.DB {
 		host = store.Settings.Get("GCLOUD_SQL_INSTANCE")
 	}
 
-	store.Logger.Info("dbname=" + dbName + " user=" + username + " host=" + host + " port=" + port + " sslmode=disable") // no pass
+	dbStr := "dbname=" + dbName + " user=" + username + " host=" + host
+	if port != "" {
+		dbStr += " port=" + port
+	}
+	store.Logger.Info(dbStr)
 
-	db, _ := sql.Open("postgres", "dbname="+dbName+" user="+username+" password="+pass+" host="+host+" port="+port+" sslmode=disable")
+	db, _ := sql.Open("postgres", dbStr+" password="+pass+" sslmode=disable ") // pass goes last
 	err = db.Ping()
 	if err != nil {
 		store.Logger.Error(err)
