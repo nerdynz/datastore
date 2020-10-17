@@ -42,6 +42,7 @@ type Datastore struct {
 	Settings  Settings
 	Websocket Websocket
 	Logger    Logger
+	FileStorage    FileStorage
 }
 
 type Settings interface {
@@ -73,6 +74,14 @@ func (ds *Datastore) TurnOffLogging() {
 	dat.SetSQLLogger(nil)
 	dat.SetErrorLogger(nil)
 }
+
+type FileStorage interface {
+	OpenFile(fileIdentifier string) (b []byte, fileIdentifier string, fullURL string, err error)
+	GetURL(fileIdentifier string) (fullURL string)
+	// always returning bytes might be a little expensive, but it makes the interface much more reasonable
+	SaveFile(fileIdentifier string, b io.Reader) (fileIdentifier string, fullURL string, err error)
+}
+
 
 // type Logger struct {
 // 	errLog string
@@ -117,12 +126,13 @@ func (ds *Datastore) TurnOffLogging() {
 
 // New - returns a new datastore which contains redis, database and settings.
 // everything in the datastore should be concurrent safe and stand within thier own right. i.e. accessible at anypoint from the app
-func New(logger Logger, settings Settings, cache Cache, ws Websocket) *Datastore {
+func New(logger Logger, settings Settings, cache Cache, filestorage FileStorage, ws Websocket) *Datastore {
 	store := Simple()
 	store.Logger = logger
 	store.Settings = settings
 	store.DB = getDBConnection(store, cache)
 	store.Cache = cache
+	store.FileStorage = 
 	return store
 }
 
