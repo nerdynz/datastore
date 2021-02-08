@@ -37,12 +37,12 @@ type Logger interface {
 }
 
 type Datastore struct {
-	DB        *runner.DB
-	Cache     Cache
-	Settings  Settings
-	Websocket Websocket
-	Logger    Logger
-	FileStorage    FileStorage
+	DB          *runner.DB
+	Cache       Cache
+	Settings    Settings
+	Websocket   Websocket
+	Logger      Logger
+	FileStorage FileStorage
 }
 
 type Settings interface {
@@ -76,12 +76,11 @@ func (ds *Datastore) TurnOffLogging() {
 }
 
 type FileStorage interface {
-	OpenFile(fileIdentifier string) (b []byte, fileIdentifier string, fullURL string, err error)
+	OpenFile(fileIdentifier string) (b []byte, fileid string, fullURL string, err error)
 	GetURL(fileIdentifier string) (fullURL string)
 	// always returning bytes might be a little expensive, but it makes the interface much more reasonable
-	SaveFile(fileIdentifier string, b io.Reader) (fileIdentifier string, fullURL string, err error)
+	SaveFile(fileIdentifier string, b io.Reader) (fileid string, fullURL string, err error)
 }
-
 
 // type Logger struct {
 // 	errLog string
@@ -132,7 +131,7 @@ func New(logger Logger, settings Settings, cache Cache, filestorage FileStorage,
 	store.Settings = settings
 	store.DB = getDBConnection(store, cache)
 	store.Cache = cache
-	store.FileStorage = 
+	store.FileStorage = filestorage
 	return store
 }
 
