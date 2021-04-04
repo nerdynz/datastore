@@ -82,47 +82,6 @@ type FileStorage interface {
 	SaveFile(fileIdentifier string, b io.Reader, sanitizePath bool) (fileid string, fullURL string, err error)
 }
 
-// type Logger struct {
-// 	errLog string
-// }
-
-// func NewLogger() *Logger {
-// 	return &Logger{}
-// }
-
-// func (l *Logger) Write(b []byte) (int, error) {
-// 	l.errLog += string(b) + "\n"
-// 	return len(b), nil
-// }
-
-// func (l *Logger) LogBytes(b []byte) {
-// 	l.errLog += string(b) + "\n"
-// }
-
-// func (l *Logger) LogText(text string) {
-// 	l.errLog += text
-// }
-
-// func (l *Logger) LogValue(val interface{}) {
-// 	b, err := json.MarshalIndent(val, "", "  ")
-// 	if err != nil {
-// 		l.LogText("failed to marshal val")
-// 	}
-// 	l.LogBytes(b)
-// }
-
-// func (l *Logger) ResetLog() {
-// 	l.errLog = "" //reset it
-// }
-
-// func (l *Logger) PrintLog() {
-// 	log.Info(l.errLog)
-// }
-
-// func (l *Logger) GetLog() string {
-// 	return l.errLog
-// }
-
 // New - returns a new datastore which contains redis, database and settings.
 // everything in the datastore should be concurrent safe and stand within thier own right. i.e. accessible at anypoint from the app
 func New(logger Logger, settings Settings, cache Cache, filestorage FileStorage, ws Websocket) *Datastore {
