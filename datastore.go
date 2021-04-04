@@ -79,7 +79,7 @@ type FileStorage interface {
 	OpenFile(fileIdentifier string) (b []byte, fileid string, fullURL string, err error)
 	GetURL(fileIdentifier string) (fullURL string)
 	// always returning bytes might be a little expensive, but it makes the interface much more reasonable
-	SaveFile(fileIdentifier string, b io.Reader) (fileid string, fullURL string, err error)
+	SaveFile(fileIdentifier string, b io.Reader, sanitizePath bool) (fileid string, fullURL string, err error)
 }
 
 // type Logger struct {
