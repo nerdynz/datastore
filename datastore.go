@@ -2,22 +2,27 @@ package datastore
 
 import (
 	"database/sql"
+	"errors"
 	"io"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	_ "gopkg.in/mattes/migrate.v1/driver/postgres" //for migrations
 	"gopkg.in/mattes/migrate.v1/migrate"
+	"gopkg.in/olahol/melody.v1"
 
+	nats "github.com/nats-io/nats.go"
 	dat "github.com/nerdynz/dat/dat"
 	runner "github.com/nerdynz/dat/sqlx-runner"
+	"github.com/sirupsen/logrus"
 )
 
-type Websocket interface {
-	Broadcast(string, string) error
-}
+// type Websocket interface {
+// 	Broadcast([]byte) error
+// }
 
 // Logger - designed as a drop in for logrus with some other backwards compat stuff
 type Logger interface {
@@ -40,7 +45,7 @@ type Datastore struct {
 	DB          *runner.DB
 	Cache       Cache
 	Settings    Settings
-	Websocket   Websocket
+	WS          *melody.Melody
 	Logger      Logger
 	FileStorage FileStorage
 }
@@ -84,11 +89,12 @@ type FileStorage interface {
 
 // New - returns a new datastore which contains redis, database and settings.
 // everything in the datastore should be concurrent safe and stand within thier own right. i.e. accessible at anypoint from the app
-func New(logger Logger, settings Settings, cache Cache, filestorage FileStorage, ws Websocket) *Datastore {
+func New(logger Logger, settings Settings, cache Cache, filestorage FileStorage) *Datastore {
 	store := Simple()
 	store.Logger = logger
 	store.Settings = settings
 	store.DB = getDBConnection(store, cache)
+	store.WS = melody.New()
 	store.Cache = cache
 	store.FileStorage = filestorage
 	return store
@@ -187,4 +193,71 @@ func getDBConnection(store *Datastore, cache Cache) *runner.DB {
 
 	// db connection
 	return runner.NewDB(db, "postgres")
+}
+
+func getNatsConnection(store *Datastore, cache Cache) (*nats.Conn, error) {
+	return nats.Connect(nats.DefaultURL)
+}
+
+func FormatSearch(searchText string) string {
+	originalSearchText := searchText
+	if searchText != "" {
+		var err error
+		searchText, err = url.QueryUnescape(searchText)
+		if err != nil {
+			searchText = originalSearchText
+			searchText = strings.Replace(searchText, "%20", "|", -1)
+			searchText = strings.Replace(searchText, "", "|", -1)
+		}
+		searchText = strings.Replace(searchText, "@", " ", -1)
+		searchText = strings.Replace(searchText, ".", " ", -1)
+		searchText = strings.Trim(searchText, " ")
+		searchText = strings.Join(strings.Split(searchText, " "), ":* & ")
+		searchText += ":*"
+	}
+	logrus.Info("searhc", searchText)
+	return searchText
+}
+
+func AppendSiteULID(siteULID string, whereSQLOrMap string, args ...interface{}) (string, []interface{}, error) {
+	if !strings.Contains(whereSQLOrMap, "$SITEULID") {
+		return whereSQLOrMap, args, errors.New("No $SITEULID placeholder defined")
+	}
+	args = append(args, siteULID)
+	position := len(args)
+	if strings.Contains(whereSQLOrMap, ".$SITEULID") {
+		newSQL := strings.Split(whereSQLOrMap, "$SITEULID")[0]
+		replaceSQLParts := strings.Split(newSQL, " ")
+		replaceSQLTablePrefix := replaceSQLParts[len(replaceSQLParts)-1]
+
+		whereSQLOrMap = strings.Replace(whereSQLOrMap, replaceSQLTablePrefix+"$SITEULID", " and "+replaceSQLTablePrefix+"site_ulid = $"+strconv.Itoa(position), -1)
+	} else if strings.Contains(whereSQLOrMap, "$SITEULID") {
+		whereSQLOrMap = strings.Replace(whereSQLOrMap, "$SITEULID", " site_ulid = $"+strconv.Itoa(position), -1)
+	} else {
+		whereSQLOrMap += " and site_ulid = $" + strconv.Itoa(position)
+	}
+	return whereSQLOrMap, args, nil
+}
+
+type PagedData struct {
+	Sort      string      `json:"sort"`
+	Search    string      `json:"search"`
+	Direction string      `json:"direction"`
+	Records   interface{} `json:"records"`
+	Total     int         `json:"total"`
+	PageNum   int         `json:"pageNum"`
+	Limit     int         `json:"limit"`
+}
+
+func NewPagedData(records interface{}, orderBy string, direction string, search string, itemsPerPage int, pageNum int, total int) *PagedData {
+	return &PagedData{
+		Records:   records,
+		Direction: direction,
+		// Sort:      casee.ToPascalCase(orderBy),
+		Sort:    orderBy,
+		Limit:   itemsPerPage,
+		PageNum: pageNum,
+		Total:   total,
+		Search:  search,
+	}
 }
