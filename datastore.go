@@ -1,7 +1,6 @@
 package datastore
 
 import (
-	"database/sql"
 	"errors"
 	"io"
 	"net"
@@ -10,19 +9,18 @@ import (
 	"strings"
 	"time"
 
-	_ "gopkg.in/mattes/migrate.v1/driver/postgres" //for migrations
-	"gopkg.in/mattes/migrate.v1/migrate"
-	"gopkg.in/olahol/melody.v1"
-
-	nats "github.com/nats-io/nats.go"
-	dat "github.com/nerdynz/dat/dat"
+	"github.com/lib/pq"
+	"github.com/nerdynz/dat/dat"
 	runner "github.com/nerdynz/dat/sqlx-runner"
+	"github.com/nerdynz/security"
+	sqldblogger "github.com/simukti/sqldb-logger"
+	"github.com/simukti/sqldb-logger/logadapter/logrusadapter"
 	"github.com/sirupsen/logrus"
 )
 
-// type Websocket interface {
-// 	Broadcast([]byte) error
-// }
+type Publisher interface {
+	Publish(siteUlid string, entity string, messageType string, ids []string) error
+}
 
 // Logger - designed as a drop in for logrus with some other backwards compat stuff
 type Logger interface {
@@ -39,13 +37,17 @@ type Logger interface {
 	Error(args ...interface{})
 	Errorf(format string, args ...interface{})
 	Errorln(args ...interface{})
+	Fatal(args ...interface{})
+	Fatalf(format string, args ...interface{})
+	Fatalln(args ...interface{})
 }
 
 type Datastore struct {
 	DB          *runner.DB
+	Publisher   Publisher
 	Cache       Cache
 	Settings    Settings
-	WS          *melody.Melody
+	Key         security.Key
 	Logger      Logger
 	FileStorage FileStorage
 }
@@ -68,11 +70,15 @@ type Cache interface {
 	FlushDB() error
 }
 
-func (ds *Datastore) TurnOnLogging() {
-	dat.SetDebugLogger(ds.Logger.Warnf)
-	dat.SetSQLLogger(ds.Logger.Infof)
-	dat.SetErrorLogger(ds.Logger.Errorf)
+func (ds *Datastore) Publish(siteUlid string, entity string, messageType string, ids []string) error {
+	return ds.Publisher.Publish(siteUlid, entity, messageType, ids)
 }
+
+// func (ds *Datastore) TurnOnLogging() { // delibrately removed in favor of "github.com/simukti/sqldb-logger"
+// 	dat.SetDebugLogger(ds.Logger.Warnf)
+// 	dat.SetSQLLogger(ds.Logger.Infof)
+// 	dat.SetErrorLogger(ds.Logger.Errorf)
+// }
 
 func (ds *Datastore) TurnOffLogging() {
 	dat.SetDebugLogger(nil)
@@ -83,7 +89,6 @@ func (ds *Datastore) TurnOffLogging() {
 type FileStorage interface {
 	OpenFile(fileIdentifier string) (b []byte, fileid string, fullURL string, err error)
 	GetURL(fileIdentifier string) (fullURL string)
-	// always returning bytes might be a little expensive, but it makes the interface much more reasonable
 	SaveFile(fileIdentifier string, b io.Reader, sanitizePath bool) (fileid string, fullURL string, err error)
 }
 
@@ -94,13 +99,19 @@ func New(logger Logger, settings Settings, cache Cache, filestorage FileStorage)
 	store.Logger = logger
 	store.Settings = settings
 	store.DB = getDBConnection(store, cache)
-	store.WS = melody.New()
 	store.Cache = cache
 	store.FileStorage = filestorage
+
+	store.TurnOffLogging()
 	return store
 }
 
+func (ds *Datastore) SetKey(key security.Key) {
+	ds.Key = key
+}
+
 func (ds *Datastore) Cleanup() {
+	ds.Logger.Info("Cleanup")
 	ds.DB.DB.Close()
 	// ds.Cache.Client.Close()
 }
@@ -111,7 +122,6 @@ func Simple() *Datastore {
 }
 
 func getDBConnection(store *Datastore, cache Cache) *runner.DB {
-	//get url from ENV in the following format postgres://user:pass@192.168.8.8:5432/spaceio")
 	dbURL := store.Settings.Get("DATABASE_URL")
 	u, err := url.Parse(dbURL)
 	if err != nil {
@@ -137,15 +147,40 @@ func getDBConnection(store *Datastore, cache Cache) *runner.DB {
 	}
 	store.Logger.Info(dbStr)
 
-	db, _ := sql.Open("postgres", dbStr+" password="+pass+" sslmode=disable ") // pass goes last
+	dsn := dbStr + " password=" + pass + " sslmode=disable "
+	db := sqldblogger.OpenDriver(dsn, &pq.Driver{}, logrusadapter.New(logrus.StandardLogger()),
+		// AVAILABLE OPTIONS
+		// sqldblogger.WithErrorFieldname("sql_error"),                   // default: error
+		// sqldblogger.WithDurationFieldname("query_duration"),           // default: duration
+		// sqldblogger.WithTimeFieldname("time"), // default: time
+		// sqldblogger.WithSQLQueryFieldname("sql_query"),                // default: query
+		// sqldblogger.WithSQLArgsFieldname("sql_args"),                  // default: args
+		// sqldblogger.WithMinimumLevel(sqldblogger.LevelDebug),          // default: LevelDebug
+		sqldblogger.WithLogArguments(true),                            // default: true
+		sqldblogger.WithDurationUnit(sqldblogger.DurationMillisecond), // default: DurationMillisecond
+		sqldblogger.WithTimeFormat(sqldblogger.TimeFormatRFC3339),     // default: TimeFormatUnix
+		sqldblogger.WithLogDriverErrorSkip(false),                     // default: false
+		sqldblogger.WithSQLQueryAsMessage(true),                       // default: false
+		// sqldblogger.WithUIDGenerator(sqldblogger.UIDGenerator),       // default: *defaultUID
+		// sqldblogger.WithConnectionIDFieldname("con_id"),  // default: conn_id
+		// sqldblogger.WithStatementIDFieldname("stm_id"),   // default: stmt_id
+		// sqldblogger.WithTransactionIDFieldname("trx_id"), // default: tx_id
+		sqldblogger.WithWrapResult(true),        // default: true
+		sqldblogger.WithIncludeStartTime(false), // default: false
+		// sqldblogger.WithStartTimeFieldname("start_time"), // default: start
+		// sqldblogger.WithPreparerLevel(sqldblogger.LevelDebug), // default: LevelInfo
+		// sqldblogger.WithQueryerLevel(sqldblogger.LevelDebug),  // default: LevelInfo
+		// sqldblogger.WithExecerLevel(sqldblogger.LevelDebug),   // default: LevelInfo
+	)
 	err = db.Ping()
 	if err != nil {
-		store.Logger.Error(err)
-		panic(err)
+		store.Logger.Fatal("postgres failed to connect %s", err.Error())
 	}
 	store.Logger.Info("database running")
 	// ensures the database can be pinged with an exponential backoff (15 min)
 	runner.MustPing(db)
+
+	// rawDb := sqldblogger.OpenDriver("file:tst2.db?cache=shared&mode=rwc&_journal_mode=WAL", &sqlite3.SQLiteDriver{}, logrusadapter.New(logrus.StandardLogger()))
 
 	// if store.Settings.Get("CACHE_NAMESPACE") != "" {
 	// 	redisUrl := ":6379"
@@ -172,15 +207,7 @@ func getDBConnection(store *Datastore, cache Cache) *runner.DB {
 	dat.EnableInterpolation = true
 
 	if store.Settings.IsProduction() {
-		// PRODUCTION
-		errs, ok := migrate.UpSync(dbURL+"?sslmode=disable", "./server/models/migrations")
-		if !ok {
-			finalError := ""
-			for _, err := range errs {
-				finalError += err.Error() + "\n"
-			}
-			store.Logger.Error(finalError)
-		}
+
 	} else {
 		// DEV`
 		// set to check things like sessions closing.
@@ -193,10 +220,6 @@ func getDBConnection(store *Datastore, cache Cache) *runner.DB {
 
 	// db connection
 	return runner.NewDB(db, "postgres")
-}
-
-func getNatsConnection(store *Datastore, cache Cache) (*nats.Conn, error) {
-	return nats.Connect(nats.DefaultURL)
 }
 
 func FormatSearch(searchText string) string {
@@ -215,7 +238,6 @@ func FormatSearch(searchText string) string {
 		searchText = strings.Join(strings.Split(searchText, " "), ":* & ")
 		searchText += ":*"
 	}
-	logrus.Info("searhc", searchText)
 	return searchText
 }
 
