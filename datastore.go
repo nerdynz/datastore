@@ -1,54 +1,38 @@
 package datastore
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/georgysavva/scany/v2/pgxscan"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/tracelog"
 	"github.com/lib/pq"
 	"github.com/nerdynz/dat/dat"
 	runner "github.com/nerdynz/dat/sqlx-runner"
 	"github.com/nerdynz/security"
 	sqldblogger "github.com/simukti/sqldb-logger"
-	"github.com/simukti/sqldb-logger/logadapter/logrusadapter"
-	"github.com/sirupsen/logrus"
 )
 
 type Publisher interface {
 	Publish(siteUlid string, entity string, messageType string, ids []string) error
 }
-
-// Logger - designed as a drop in for logrus with some other backwards compat stuff
-type Logger interface {
-	SetOutput(out io.Writer)
-	Print(args ...interface{})
-	Printf(format string, args ...interface{})
-	Println(args ...interface{})
-	Info(args ...interface{})
-	Infof(format string, args ...interface{})
-	Infoln(args ...interface{})
-	Warn(args ...interface{})
-	Warnf(format string, args ...interface{})
-	Warnln(args ...interface{})
-	Error(args ...interface{})
-	Errorf(format string, args ...interface{})
-	Errorln(args ...interface{})
-	Fatal(args ...interface{})
-	Fatalf(format string, args ...interface{})
-	Fatalln(args ...interface{})
-}
-
 type Datastore struct {
+	*pgxpool.Pool
 	DB          *runner.DB
 	Publisher   Publisher
 	Cache       Cache
 	Settings    Settings
 	Key         security.Key
-	Logger      Logger
 	FileStorage FileStorage
 }
 
@@ -74,10 +58,99 @@ func (ds *Datastore) Publish(siteUlid string, entity string, messageType string,
 	return ds.Publisher.Publish(siteUlid, entity, messageType, ids)
 }
 
+type slogAdapter struct {
+	logger *slog.Logger
+}
+
+type slogPgxAdapter struct {
+	logger *slog.Logger
+}
+
+func (sa *slogAdapter) Log(ctx context.Context, level sqldblogger.Level, msg string, data map[string]any) {
+	ll := levelTrace
+	switch level {
+	case sqldblogger.LevelError:
+		ll = levelError
+		break
+	case sqldblogger.LevelInfo:
+		ll = levelInfo
+		break
+	case sqldblogger.LevelDebug:
+		ll = levelDebug
+		break
+	}
+	log(sa.logger, ctx, ll, msg, data)
+}
+
+func (sa *slogPgxAdapter) Log(ctx context.Context, level tracelog.LogLevel, msg string, data map[string]any) {
+	ll := levelTrace
+	switch level {
+	case tracelog.LogLevelError:
+		ll = levelError
+		break
+	case tracelog.LogLevelInfo:
+		ll = levelInfo
+		break
+	case tracelog.LogLevel(levelDebug):
+		ll = levelDebug
+		break
+	}
+	log(sa.logger, ctx, ll, msg, data)
+}
+
+type loglevel uint8
+
+const (
+	// LevelTrace is the lowest level and the most detailed.
+	// Use this if you want to know interaction flow from prepare, statement, execution to result/rows.
+	levelTrace loglevel = iota
+	// LevelDebug is used by non Queryer(Context) and Execer(Context) call like Ping() and Connect().
+	levelDebug
+	// LevelInfo is used by Queryer, Execer, Preparer, and Stmt.
+	levelInfo
+	// LevelError is used on actual driver error or when driver not implement some optional sql/driver interface.
+	levelError
+)
+
+func log(logger *slog.Logger, ctx context.Context, level loglevel, msg string, data map[string]any) {
+	args := make([]any, 0, len(data))
+
+	for k, v := range data {
+		if k == "time" {
+			continue
+		}
+		k := k
+		v := v
+		if k == "sql" {
+			sql := strings.ReplaceAll(v.(string), "\n", " ")
+			sql = strings.ReplaceAll(sql, "\t", " ")
+			v = sql
+		}
+		// if k == "conn_id" {
+		// 	continue
+		// }
+
+		args = append(args, slog.Any(k, v))
+	}
+	args = append(args, "sql")
+	args = append(args, msg)
+
+	switch level { //nolint:exhaustive
+	case levelError:
+		logger.ErrorContext(ctx, "DB", args...)
+	case levelInfo:
+		logger.InfoContext(ctx, "DB", args...)
+	case levelDebug:
+		logger.DebugContext(ctx, "DB", args...)
+	default:
+		logger.DebugContext(ctx, "DB", args...)
+	}
+}
+
 // func (ds *Datastore) TurnOnLogging() { // delibrately removed in favor of "github.com/simukti/sqldb-logger"
-// 	dat.SetDebugLogger(ds.Logger.Warnf)
-// 	dat.SetSQLLogger(ds.Logger.Infof)
-// 	dat.SetErrorLogger(ds.Logger.Errorf)
+// 	dat.SetDebugLogger(slog.Warnf)
+// 	dat.SetSQLLogger(slog.Infof)
+// 	dat.SetErrorLogger(slog.Errorf)
 // }
 
 func (ds *Datastore) TurnOffLogging() {
@@ -94,11 +167,26 @@ type FileStorage interface {
 
 // New - returns a new datastore which contains redis, database and settings.
 // everything in the datastore should be concurrent safe and stand within thier own right. i.e. accessible at anypoint from the app
-func New(logger Logger, settings Settings, cache Cache, filestorage FileStorage) *Datastore {
-	store := Simple()
-	store.Logger = logger
+func New(settings Settings, cache Cache, filestorage FileStorage) *Datastore {
+	config, err := pgxpool.ParseConfig(os.Getenv("DATABASE_URL"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Unable to connect to database: %v\n", err)
+		os.Exit(1)
+	}
+	config.ConnConfig.Tracer = &tracelog.TraceLog{
+		Logger:   &slogPgxAdapter{logger: slog.Default()},
+		LogLevel: tracelog.LogLevelTrace,
+	}
+	conn, err := pgxpool.NewWithConfig(context.Background(), config)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Unable to connect to database: %v\n", err)
+		os.Exit(1)
+	}
+	// defer conn.Close(context.Background())
+	store := Simple(conn)
 	store.Settings = settings
 	store.DB = getDBConnection(store, cache)
+
 	store.Cache = cache
 	store.FileStorage = filestorage
 
@@ -106,18 +194,28 @@ func New(logger Logger, settings Settings, cache Cache, filestorage FileStorage)
 	return store
 }
 
+func (ds *Datastore) Select(ctx context.Context, records any, sql string, args ...interface{}) error {
+	return pgxscan.Select(ctx, ds, records, sql, args...)
+}
+
+func (ds *Datastore) One(ctx context.Context, record any, sql string, args ...interface{}) error {
+	return pgxscan.Get(ctx, ds, record, sql, args...)
+}
+
 func (ds *Datastore) SetKey(key security.Key) {
 	ds.Key = key
 }
 
 func (ds *Datastore) Cleanup() {
-	ds.Logger.Info("Cleanup")
+	slog.Info("Cleanup")
 	ds.DB.DB.Close()
 	// ds.Cache.Client.Close()
 }
 
-func Simple() *Datastore {
-	store := &Datastore{}
+func Simple(c *pgxpool.Pool) *Datastore {
+	store := &Datastore{
+		Pool: c,
+	}
 	return store
 }
 
@@ -125,13 +223,14 @@ func getDBConnection(store *Datastore, cache Cache) *runner.DB {
 	dbURL := store.Settings.Get("DATABASE_URL")
 	u, err := url.Parse(dbURL)
 	if err != nil {
-		store.Logger.Error(err)
+		slog.Error("Fatal database parse error", "error", err)
+		os.Exit(0)
 	}
 
 	username := u.User.Username()
 	pass, isPassSet := u.User.Password()
 	if !isPassSet {
-		store.Logger.Error("no database password")
+		slog.Error("no database password")
 	}
 	host, port, _ := net.SplitHostPort(u.Host)
 	dbName := strings.Replace(u.Path, "/", "", 1)
@@ -145,10 +244,12 @@ func getDBConnection(store *Datastore, cache Cache) *runner.DB {
 	if port != "" {
 		dbStr += " port=" + port
 	}
-	store.Logger.Info(dbStr)
+	slog.Info("Connecting to ", "db", dbName, "user", username, "host", host)
 
 	dsn := dbStr + " password=" + pass + " sslmode=disable "
-	db := sqldblogger.OpenDriver(dsn, &pq.Driver{}, logrusadapter.New(logrus.StandardLogger()),
+	db := sqldblogger.OpenDriver(dsn, &pq.Driver{}, &slogAdapter{
+		slog.Default(),
+	},
 		// AVAILABLE OPTIONS
 		// sqldblogger.WithErrorFieldname("sql_error"),                   // default: error
 		// sqldblogger.WithDurationFieldname("query_duration"),           // default: duration
@@ -172,11 +273,8 @@ func getDBConnection(store *Datastore, cache Cache) *runner.DB {
 		// sqldblogger.WithQueryerLevel(sqldblogger.LevelDebug),  // default: LevelInfo
 		// sqldblogger.WithExecerLevel(sqldblogger.LevelDebug),   // default: LevelInfo
 	)
-	err = db.Ping()
-	if err != nil {
-		store.Logger.Fatal("postgres failed to connect %s", err.Error())
-	}
-	store.Logger.Info("database running")
+
+	slog.Info("database running")
 	// ensures the database can be pinged with an exponential backoff (15 min)
 	runner.MustPing(db)
 
@@ -189,10 +287,10 @@ func getDBConnection(store *Datastore, cache Cache) *runner.DB {
 	// 	}
 	// 	cache, err := kvs.NewRedisStore(store.Settings.Get("CACHE_NAMESPACE"), redisUrl, "")
 	// 	if err != nil {
-	// 		store.Logger.Error(err)
+	// 		slog.Error(err)
 	// 		panic(err)
 	// 	}
-	// 	store.Logger.Info("USING CACHE", store.Settings.Get("CACHE_NAMESPACE"))
+	// 	slog.Info("USING CACHE", store.Settings.Get("CACHE_NAMESPACE"))
 	// 	runner.SetCache(cache)
 	// }
 	if cache != nil {
@@ -206,16 +304,11 @@ func getDBConnection(store *Datastore, cache Cache) *runner.DB {
 	// set this to enable interpolation
 	dat.EnableInterpolation = true
 
-	if store.Settings.IsProduction() {
-
-	} else {
+	if store.Settings.IsDevelopment() {
 		// DEV`
 		// set to check things like sessions closing.
 		// Should be disabled in production/release builds.
 		dat.Strict = true
-
-		// Log any query over 10ms as warnings. (optional)
-		// runner.LogQueriesThreshold = 1 * time.Microsecond // LOG EVERYTHING ON DEV // turn it off and on with a flag
 	}
 
 	// db connection
@@ -242,6 +335,9 @@ func FormatSearch(searchText string) string {
 }
 
 func AppendSiteULID(siteULID string, whereSQLOrMap string, args ...interface{}) (string, []interface{}, error) {
+	if strings.Contains(whereSQLOrMap, " site_ulid = $") {
+		return whereSQLOrMap, args, nil
+	}
 	if !strings.Contains(whereSQLOrMap, "$SITEULID") {
 		return whereSQLOrMap, args, errors.New("No $SITEULID placeholder defined")
 	}
