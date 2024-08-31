@@ -339,7 +339,7 @@ func AppendSiteULID(siteULID string, whereSQLOrMap string, args ...interface{}) 
 		return whereSQLOrMap, args, nil
 	}
 	if !strings.Contains(whereSQLOrMap, "$SITEULID") {
-		return whereSQLOrMap, args, errors.New("No $SITEULID placeholder defined")
+		return whereSQLOrMap, args, errors.New("No $SITEULID placeholder defined in " + whereSQLOrMap)
 	}
 	args = append(args, siteULID)
 	position := len(args)
