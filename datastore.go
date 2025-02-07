@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -16,24 +15,24 @@ import (
 	"github.com/georgysavva/scany/v2/pgxscan"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/tracelog"
-	"github.com/lib/pq"
-	"github.com/nerdynz/dat/dat"
-	runner "github.com/nerdynz/dat/sqlx-runner"
-	"github.com/nerdynz/security"
+	"github.com/oklog/ulid/v2"
 	sqldblogger "github.com/simukti/sqldb-logger"
 )
 
 type Publisher interface {
 	Publish(siteUlid string, entity string, messageType string, ids []string) error
 }
+
 type Datastore struct {
 	*pgxpool.Pool
-	DB          *runner.DB
 	Publisher   Publisher
 	Cache       Cache
 	Settings    Settings
-	Key         security.Key
 	FileStorage FileStorage
+}
+
+func ULID() string {
+	return ulid.Make().String()
 }
 
 type Settings interface {
@@ -147,18 +146,6 @@ func log(logger *slog.Logger, ctx context.Context, level loglevel, msg string, d
 	}
 }
 
-// func (ds *Datastore) TurnOnLogging() { // delibrately removed in favor of "github.com/simukti/sqldb-logger"
-// 	dat.SetDebugLogger(slog.Warnf)
-// 	dat.SetSQLLogger(slog.Infof)
-// 	dat.SetErrorLogger(slog.Errorf)
-// }
-
-func (ds *Datastore) TurnOffLogging() {
-	dat.SetDebugLogger(nil)
-	dat.SetSQLLogger(nil)
-	dat.SetErrorLogger(nil)
-}
-
 type FileStorage interface {
 	OpenFile(fileIdentifier string) (b []byte, fileid string, fullURL string, err error)
 	GetURL(fileIdentifier string) (fullURL string)
@@ -185,12 +172,10 @@ func New(settings Settings, cache Cache, filestorage FileStorage) *Datastore {
 	// defer conn.Close(context.Background())
 	store := Simple(conn)
 	store.Settings = settings
-	store.DB = getDBConnection(store, cache)
 
 	store.Cache = cache
 	store.FileStorage = filestorage
 
-	store.TurnOffLogging()
 	return store
 }
 
@@ -202,117 +187,11 @@ func (ds *Datastore) One(ctx context.Context, record any, sql string, args ...in
 	return pgxscan.Get(ctx, ds, record, sql, args...)
 }
 
-func (ds *Datastore) SetKey(key security.Key) {
-	ds.Key = key
-}
-
-func (ds *Datastore) Cleanup() {
-	slog.Info("Cleanup")
-	ds.DB.DB.Close()
-	// ds.Cache.Client.Close()
-}
-
 func Simple(c *pgxpool.Pool) *Datastore {
 	store := &Datastore{
 		Pool: c,
 	}
 	return store
-}
-
-func getDBConnection(store *Datastore, cache Cache) *runner.DB {
-	dbURL := store.Settings.Get("DATABASE_URL")
-	u, err := url.Parse(dbURL)
-	if err != nil {
-		slog.Error("Fatal database parse error", "error", err)
-		os.Exit(0)
-	}
-
-	username := u.User.Username()
-	pass, isPassSet := u.User.Password()
-	if !isPassSet {
-		slog.Error("no database password")
-	}
-	host, port, _ := net.SplitHostPort(u.Host)
-	dbName := strings.Replace(u.Path, "/", "", 1)
-
-	if host == "GCLOUD_SQL_INSTANCE" {
-		// USE THE GCLOUD_SQL_INSTANCE SETTING instead... e.g. host= /cloudsql/INSTANCE_CONNECTION_NAME
-		host = store.Settings.Get("GCLOUD_SQL_INSTANCE")
-	}
-
-	dbStr := "dbname=" + dbName + " user=" + username + " host=" + host
-	if port != "" {
-		dbStr += " port=" + port
-	}
-	slog.Info("Connecting to ", "db", dbName, "user", username, "host", host)
-
-	dsn := dbStr + " password=" + pass + " sslmode=disable "
-	db := sqldblogger.OpenDriver(dsn, &pq.Driver{}, &slogAdapter{
-		slog.Default(),
-	},
-		// AVAILABLE OPTIONS
-		// sqldblogger.WithErrorFieldname("sql_error"),                   // default: error
-		// sqldblogger.WithDurationFieldname("query_duration"),           // default: duration
-		// sqldblogger.WithTimeFieldname("time"), // default: time
-		// sqldblogger.WithSQLQueryFieldname("sql_query"),                // default: query
-		// sqldblogger.WithSQLArgsFieldname("sql_args"),                  // default: args
-		// sqldblogger.WithMinimumLevel(sqldblogger.LevelDebug),          // default: LevelDebug
-		sqldblogger.WithLogArguments(true),                            // default: true
-		sqldblogger.WithDurationUnit(sqldblogger.DurationMillisecond), // default: DurationMillisecond
-		sqldblogger.WithTimeFormat(sqldblogger.TimeFormatRFC3339),     // default: TimeFormatUnix
-		sqldblogger.WithLogDriverErrorSkip(false),                     // default: false
-		sqldblogger.WithSQLQueryAsMessage(true),                       // default: false
-		// sqldblogger.WithUIDGenerator(sqldblogger.UIDGenerator),       // default: *defaultUID
-		// sqldblogger.WithConnectionIDFieldname("con_id"),  // default: conn_id
-		// sqldblogger.WithStatementIDFieldname("stm_id"),   // default: stmt_id
-		// sqldblogger.WithTransactionIDFieldname("trx_id"), // default: tx_id
-		sqldblogger.WithWrapResult(true),        // default: true
-		sqldblogger.WithIncludeStartTime(false), // default: false
-		// sqldblogger.WithStartTimeFieldname("start_time"), // default: start
-		// sqldblogger.WithPreparerLevel(sqldblogger.LevelDebug), // default: LevelInfo
-		// sqldblogger.WithQueryerLevel(sqldblogger.LevelDebug),  // default: LevelInfo
-		// sqldblogger.WithExecerLevel(sqldblogger.LevelDebug),   // default: LevelInfo
-	)
-
-	slog.Info("database running")
-	// ensures the database can be pinged with an exponential backoff (15 min)
-	runner.MustPing(db)
-
-	// rawDb := sqldblogger.OpenDriver("file:tst2.db?cache=shared&mode=rwc&_journal_mode=WAL", &sqlite3.SQLiteDriver{}, logrusadapter.New(logrus.StandardLogger()))
-
-	// if store.Settings.Get("CACHE_NAMESPACE") != "" {
-	// 	redisUrl := ":6379"
-	// 	if store.Settings.Get("CACHE_URL") != "" {
-	// 		redisUrl = store.Settings.Get("CACHE_URL")
-	// 	}
-	// 	cache, err := kvs.NewRedisStore(store.Settings.Get("CACHE_NAMESPACE"), redisUrl, "")
-	// 	if err != nil {
-	// 		slog.Error(err)
-	// 		panic(err)
-	// 	}
-	// 	slog.Info("USING CACHE", store.Settings.Get("CACHE_NAMESPACE"))
-	// 	runner.SetCache(cache)
-	// }
-	if cache != nil {
-		runner.SetCache(cache)
-	}
-
-	// set to reasonable values for production
-	db.SetMaxIdleConns(4)
-	db.SetMaxOpenConns(16)
-
-	// set this to enable interpolation
-	dat.EnableInterpolation = true
-
-	if store.Settings.IsDevelopment() {
-		// DEV`
-		// set to check things like sessions closing.
-		// Should be disabled in production/release builds.
-		dat.Strict = true
-	}
-
-	// db connection
-	return runner.NewDB(db, "postgres")
 }
 
 func FormatSearch(searchText string) string {
