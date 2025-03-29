@@ -50,7 +50,7 @@ type Cache interface {
 	Del(ctx context.Context, key string) error
 	GetBytes(ctx context.Context, key string) ([]byte, error)
 	SetBytes(ctx context.Context, key string, value []byte, duration time.Duration) error
-	FlushDB() error
+	FlushDB(ctx context.Context) error
 }
 
 func (ds *Datastore) Publish(siteUlid string, entity string, messageType string, ids []string) error {
