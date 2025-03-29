@@ -44,12 +44,12 @@ type Settings interface {
 }
 
 type Cache interface {
-	Set(key string, value string, duration time.Duration) error
-	Get(key string) (string, error)
-	Expire(key string) error
-	Del(key string) error
-	GetBytes(key string) ([]byte, error)
-	SetBytes(key string, value []byte, duration time.Duration) error
+	Set(ctx context.Context, key string, value string, duration time.Duration) error
+	Get(ctx context.Context, key string) (string, error)
+	Expire(ctx context.Context, key string) error
+	Del(ctx context.Context, key string) error
+	GetBytes(ctx context.Context, key string) ([]byte, error)
+	SetBytes(ctx context.Context, key string, value []byte, duration time.Duration) error
 	FlushDB() error
 }
 
