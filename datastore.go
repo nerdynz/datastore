@@ -14,6 +14,7 @@ import (
 
 	"github.com/georgysavva/scany/v2/pgxscan"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/tracelog"
 	"github.com/oklog/ulid/v2"
@@ -153,14 +154,9 @@ type FileStorage interface {
 	SaveFile(fileIdentifier string, b io.Reader, sanitizePath bool) (fileid string, fullURL string, err error)
 }
 
-type PgxTypeMap struct {
-	Value   any
-	PgxType string
-}
-
 type DatastoreConfig struct {
 	DatabaseURL string
-	TypeMaps    []PgxTypeMap
+	PGXTypes    []*pgtype.Type
 }
 
 // New - returns a new datastore which contains redis, database and settings.
@@ -182,9 +178,8 @@ func NewWithConfig(settings Settings, cache Cache, filestorage FileStorage, conf
 		LogLevel: tracelog.LogLevelTrace,
 	}
 	config.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
-		// conn.TypeMap().RegisterDefaultPgType(TimeStr(""), "timestamp")
-		for _, typeMap := range conf.TypeMaps {
-			conn.TypeMap().RegisterDefaultPgType(typeMap.Value, typeMap.PgxType)
+		for _, typeMap := range conf.PGXTypes {
+			conn.TypeMap().RegisterType(typeMap)
 		}
 		return conn.Ping(ctx)
 	}
