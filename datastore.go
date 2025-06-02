@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/georgysavva/scany/v2/pgxscan"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/tracelog"
 	"github.com/oklog/ulid/v2"
@@ -138,11 +139,11 @@ func log(logger *slog.Logger, ctx context.Context, level loglevel, msg string, d
 	case levelError:
 		logger.ErrorContext(ctx, "DB", args...)
 	case levelInfo:
-		logger.InfoContext(ctx, "DB", args...)
+		// logger.InfoContext(ctx, "DB", args...)
 	case levelDebug:
-		logger.DebugContext(ctx, "DB", args...)
+		// logger.DebugContext(ctx, "DB", args...)
 	default:
-		logger.DebugContext(ctx, "DB", args...)
+		// logger.DebugContext(ctx, "DB", args...)
 	}
 }
 
@@ -152,10 +153,26 @@ type FileStorage interface {
 	SaveFile(fileIdentifier string, b io.Reader, sanitizePath bool) (fileid string, fullURL string, err error)
 }
 
+type PgxTypeMap struct {
+	Value   any
+	PgxType string
+}
+
+type DatastoreConfig struct {
+	DatabaseURL string
+	TypeMaps    []PgxTypeMap
+}
+
 // New - returns a new datastore which contains redis, database and settings.
 // everything in the datastore should be concurrent safe and stand within thier own right. i.e. accessible at anypoint from the app
 func New(settings Settings, cache Cache, filestorage FileStorage) *Datastore {
-	config, err := pgxpool.ParseConfig(os.Getenv("DATABASE_URL"))
+	return NewWithConfig(settings, cache, filestorage, DatastoreConfig{
+		DatabaseURL: settings.Get("DATABASE_URL"),
+	})
+}
+
+func NewWithConfig(settings Settings, cache Cache, filestorage FileStorage, conf DatastoreConfig) *Datastore {
+	config, err := pgxpool.ParseConfig(conf.DatabaseURL)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Unable to connect to database: %v\n", err)
 		os.Exit(1)
@@ -163,6 +180,13 @@ func New(settings Settings, cache Cache, filestorage FileStorage) *Datastore {
 	config.ConnConfig.Tracer = &tracelog.TraceLog{
 		Logger:   &slogPgxAdapter{logger: slog.Default()},
 		LogLevel: tracelog.LogLevelTrace,
+	}
+	config.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		// conn.TypeMap().RegisterDefaultPgType(TimeStr(""), "timestamp")
+		for _, typeMap := range conf.TypeMaps {
+			conn.TypeMap().RegisterDefaultPgType(typeMap.Value, typeMap.PgxType)
+		}
+		return conn.Ping(ctx)
 	}
 	conn, err := pgxpool.NewWithConfig(context.Background(), config)
 	if err != nil {
