@@ -140,11 +140,11 @@ func log(logger *slog.Logger, ctx context.Context, level loglevel, msg string, d
 	case levelError:
 		logger.ErrorContext(ctx, "DB", args...)
 	case levelInfo:
-		// logger.InfoContext(ctx, "DB", args...)
+		logger.InfoContext(ctx, "DB", args...)
 	case levelDebug:
-		// logger.DebugContext(ctx, "DB", args...)
+		logger.DebugContext(ctx, "DB", args...)
 	default:
-		// logger.DebugContext(ctx, "DB", args...)
+		logger.DebugContext(ctx, "DB", args...)
 	}
 }
 
@@ -154,9 +154,15 @@ type FileStorage interface {
 	SaveFile(fileIdentifier string, b io.Reader, sanitizePath bool) (fileid string, fullURL string, err error)
 }
 
+type PgxDefaultType struct {
+	Value any
+	Name  string
+}
+
 type DatastoreConfig struct {
-	DatabaseURL string
-	PGXTypes    []*pgtype.Type
+	DatabaseURL     string
+	PGXTypes        []*pgtype.Type
+	PGXDefaultTypes []PgxDefaultType
 }
 
 // New - returns a new datastore which contains redis, database and settings.
@@ -180,6 +186,9 @@ func NewWithConfig(settings Settings, cache Cache, filestorage FileStorage, conf
 	config.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
 		for _, typeMap := range conf.PGXTypes {
 			conn.TypeMap().RegisterType(typeMap)
+		}
+		for _, PgxDefaultType := range conf.PGXDefaultTypes {
+			conn.TypeMap().RegisterDefaultPgType(PgxDefaultType.Value, PgxDefaultType.Name)
 		}
 		return conn.Ping(ctx)
 	}
