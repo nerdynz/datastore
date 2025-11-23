@@ -207,7 +207,7 @@ func NewWithConfig(settings Settings, cache Cache, filestorage FileStorage, conf
 	return store
 }
 
-func (ds *Datastore) Tx(ctx context.Context) (context.Context, error) {
+func (ds *Datastore) Begin(ctx context.Context) (context.Context, error) {
 	tx, err := ds.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return ctx, err
@@ -215,13 +215,21 @@ func (ds *Datastore) Tx(ctx context.Context) (context.Context, error) {
 	return context.WithValue(ctx, "tx", tx), nil
 }
 
-func (ds *Datastore) Commit(ctx context.Context) error {
+func (ds *Datastore) Tx(ctx context.Context) (pgx.Tx, error) {
 	tx, ok := ctx.Value("tx").(pgx.Tx)
 	if !ok {
-		return errors.New("tx not found")
+		return nil, errors.New("tx not found")
+	}
+	return tx, nil
+}
+
+func (ds *Datastore) Commit(ctx context.Context) error {
+	tx, err := ds.Tx(ctx)
+	if err != nil {
+		return err
 	}
 
-	err := tx.Commit(ctx)
+	err = tx.Commit(ctx)
 	if err != nil {
 		if errors.Is(err, pgx.ErrTxClosed) {
 			return nil
@@ -233,12 +241,12 @@ func (ds *Datastore) Commit(ctx context.Context) error {
 }
 
 func (ds *Datastore) Rollback(ctx context.Context) error {
-	tx, ok := ctx.Value("tx").(pgx.Tx)
-	if !ok {
-		return errors.New("tx not found")
+	tx, err := ds.Tx(ctx)
+	if err != nil {
+		return err
 	}
 
-	err := tx.Rollback(ctx)
+	err = tx.Rollback(ctx)
 	if err != nil {
 		if errors.Is(err, pgx.ErrTxClosed) {
 			return nil
