@@ -223,8 +223,12 @@ func (ds *Datastore) Commit(ctx context.Context) error {
 
 	err := tx.Commit(ctx)
 	if err != nil {
+		if errors.Is(err, pgx.ErrTxClosed) {
+			return nil
+		}
 		return err
 	}
+
 	return nil
 }
 
@@ -236,6 +240,9 @@ func (ds *Datastore) Rollback(ctx context.Context) error {
 
 	err := tx.Rollback(ctx)
 	if err != nil {
+		if errors.Is(err, pgx.ErrTxClosed) {
+			return nil
+		}
 		return err
 	}
 	return nil
