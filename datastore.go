@@ -215,6 +215,19 @@ func (ds *Datastore) Tx(ctx context.Context) (context.Context, error) {
 	return context.WithValue(ctx, "tx", tx), nil
 }
 
+func (ds *Datastore) Commit(ctx context.Context) error {
+	tx, ok := ctx.Value("tx").(pgx.Tx)
+	if !ok {
+		return errors.New("tx not found")
+	}
+
+	err := tx.Commit(ctx)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (ds *Datastore) Rollback(ctx context.Context) error {
 	tx, ok := ctx.Value("tx").(pgx.Tx)
 	if !ok {
