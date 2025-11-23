@@ -208,6 +208,10 @@ func NewWithConfig(settings Settings, cache Cache, filestorage FileStorage, conf
 }
 
 func (ds *Datastore) Begin(ctx context.Context) (context.Context, error) {
+	_, ok := ctx.Value("tx").(pgx.Tx)
+	if ok {
+		return nil, errors.New("tx already started")
+	}
 	tx, err := ds.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return ctx, err
