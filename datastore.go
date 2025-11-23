@@ -207,6 +207,28 @@ func NewWithConfig(settings Settings, cache Cache, filestorage FileStorage, conf
 	return store
 }
 
+func (ds *Datastore) Tx(ctx context.Context) error {
+	tx, err := ds.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	ctx = context.WithValue(ctx, "tx", tx)
+	return nil
+}
+
+func (ds *Datastore) Rollback(ctx context.Context) error {
+	tx, ok := ctx.Value("tx").(pgx.Tx)
+	if !ok {
+		return errors.New("tx not found")
+	}
+
+	err := tx.Rollback(ctx)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (ds *Datastore) Select(ctx context.Context, records any, sql string, args ...interface{}) error {
 	return pgxscan.Select(ctx, ds, records, sql, args...)
 }

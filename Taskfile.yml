@@ -1,7 +1,7 @@
 version: '3'
 
 tasks:
-  default:
+  tag:
     desc: Bumps the minor version and pushes the tag
     cmds:
       - |
