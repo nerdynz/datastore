@@ -207,13 +207,12 @@ func NewWithConfig(settings Settings, cache Cache, filestorage FileStorage, conf
 	return store
 }
 
-func (ds *Datastore) Tx(ctx context.Context) error {
+func (ds *Datastore) Tx(ctx context.Context) (context.Context, error) {
 	tx, err := ds.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return err
+		return ctx, err
 	}
-	ctx = context.WithValue(ctx, "tx", tx)
-	return nil
+	return context.WithValue(ctx, "tx", tx), nil
 }
 
 func (ds *Datastore) Rollback(ctx context.Context) error {
